@@ -1,0 +1,40 @@
+name: lab-fetch
+# Pre-launch image bake-off plumbing: downloads requested result files (public cut-outs or
+# AES-GCM-encrypted bundles) into lab/outbox so they can be reviewed. Nothing here is sensitive.
+on:
+  push:
+    branches: [lab]
+    paths: ['lab/requests/**']
+permissions:
+  contents: write
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: lab }
+      - name: Fetch requested files
+        env:
+          ANON: ${{ vars.SUPABASE_ANON_KEY }}
+        run: |
+          set -e
+          for req in lab/requests/*.json; do
+            name=$(basename "$req" .json)
+            out="lab/outbox/$name"
+            [ -d "$out" ] && continue
+            mkdir -p "$out"
+            jq -c '.files[]' "$req" | while read -r f; do
+              url=$(echo "$f" | jq -r '.url'); file=$(echo "$f" | jq -r '.name')
+              method=$(echo "$f" | jq -r '.method // "GET"'); body=$(echo "$f" | jq -c '.body // {}')
+              auth=$(echo "$f" | jq -r '.auth // ""')
+              if [ "$method" = "POST" ]; then
+                curl -sS --retry 3 -m 280 -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $auth" -d "$body" -o "$out/$file" "$url" || echo "failed $url" >> "$out/_errors.txt"
+              else
+                curl -sS --retry 3 -m 120 -o "$out/$file" "$url" || echo "failed $url" >> "$out/_errors.txt"
+              fi
+            done
+          done
+          git config user.name "lit-fits-bot"; git config user.email "bot@users.noreply.github.com"
+          git add lab/outbox
+          git commit -m "lab: fetched results" || exit 0
+          git push
