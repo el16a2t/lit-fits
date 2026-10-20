@@ -5,7 +5,7 @@ import { stylist } from './routes/stylist.ts';
 import { complete, nameLook, pack, pairings } from './routes/assist.ts';
 import { buildTwin, render, renderUrl } from './routes/render.ts';
 import { dna, trends } from './routes/style.ts';
-import { bootstrap, reshootMissing, wishlistConcept } from './routes/misc.ts';
+import { bootstrap, clientLog, reshootMissing, wishlistConcept } from './routes/misc.ts';
 import { lab } from './routes/lab.ts';
 
 type Handler = (req: Request, caller: Awaited<ReturnType<typeof authenticate>>, route: string) => Promise<Response>;
@@ -33,6 +33,7 @@ Deno.serve(async (req) => {
   try {
     if (route === 'health') return json({ ok: true, at: new Date().toISOString() });
     if (route === 'bootstrap') return await bootstrap(req);
+    if (route === 'client/log') return await clientLog(req);
     // exports are AES-GCM encrypted with a key only the owner's tooling holds, so they can be served without auth
     if (route === 'lab/export') return await lab(req, { userId: '', internal: true }, route);
     if (route.startsWith('lab/')) {

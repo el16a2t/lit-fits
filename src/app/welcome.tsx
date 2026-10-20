@@ -3,6 +3,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { Button, Field, Label, Screen, Txt } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
+import { errorInfo, trace } from '@/lib/diag';
 import { haptic } from '@/lib/haptics';
 import { supabase } from '@/lib/supabase';
 import { space, useTheme } from '@/theme';
@@ -16,14 +17,20 @@ export default function Welcome() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [step, setStep] = useState<string | null>(null);
+
   const go = async () => {
+    trace('welcome:tap', { mode, emailLen: email.trim().length, pwLen: password.length });
     setErr(null);
     setBusy(true);
     try {
       if (mode === 'create') {
+        setStep('Setting up your wardrobe…');
         try {
-          await api.bootstrap(email.trim(), password, name.trim());
+          const r = await api.bootstrap(email.trim(), password, name.trim());
+          trace('welcome:bootstrap:ok', { adopted: r?.adopted });
         } catch (e) {
+          trace('welcome:bootstrap:error', errorInfo(e));
           if (e instanceof ApiError && e.status === 409) {
             setMode('signin');
             setErr('This Lit Fits already has an owner. Sign in instead.');
@@ -32,14 +39,21 @@ export default function Welcome() {
           throw e;
         }
       }
-      const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      if (error) throw error;
+      setStep('Signing you in…');
+      const res = await Promise.race([
+        supabase.auth.signInWithPassword({ email: email.trim(), password }),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("Couldn't reach Lit Fits in time. Check your connection and try again.")), 45_000)),
+      ]);
+      if (res.error) throw res.error;
+      trace('welcome:signin:ok');
       haptic.success();
     } catch (e: any) {
+      trace('welcome:error', errorInfo(e));
       haptic.warn();
       setErr(e?.message ?? 'Something went wrong');
     } finally {
       setBusy(false);
+      setStep(null);
     }
   };
 
@@ -62,7 +76,7 @@ export default function Welcome() {
               <Field label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" style={{ color: '#111' }} />
               <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry autoComplete={mode === 'create' ? 'new-password' : 'current-password'} style={{ color: '#111' }} hint={mode === 'create' ? '8+ characters. This app has exactly one user: you.' : undefined} />
               {err ? <Txt v="small" color={c.danger}>{err}</Txt> : null}
-              <Button label={mode === 'create' ? 'Create my wardrobe' : 'Sign in'} onPress={go} loading={busy} disabled={!email || password.length < 8} style={{ backgroundColor: '#111' }} fg="#F2F0EB" />
+              <Button label={busy ? (step ?? 'Working…') : mode === 'create' ? 'Create my wardrobe' : 'Sign in'} onPress={go} loading={busy} disabled={!email || password.length < 8} style={{ backgroundColor: '#111' }} fg="#F2F0EB" />
             </View>
             <Button kind="ghost" fg="#F2F0EB" label={mode === 'create' ? 'I already have an account' : 'First time here'} onPress={() => { setErr(null); setMode(mode === 'create' ? 'signin' : 'create'); }} style={{ alignSelf: 'center' }} />
           </Animated.View>

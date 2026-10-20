@@ -46,8 +46,8 @@ export function Press({ children, style, scaleTo = 0.97, onPress, onLongPress, h
       disabled={disabled}
       onPressIn={(e) => { s.value = withSpring(scaleTo, motion.springSnappy); rest.onPressIn?.(e); }}
       onPressOut={(e) => { s.value = withSpring(1, motion.springSnappy); rest.onPressOut?.(e); }}
-      onPress={(e) => { if (hapticOn) haptic[hapticOn](); onPress?.(e); }}
-      onLongPress={onLongPress ? (e) => { haptic.medium(); onLongPress(e); } : undefined}
+      onPress={(e) => { try { if (hapticOn) haptic[hapticOn](); } catch { /* never block the action */ } onPress?.(e); }}
+      onLongPress={onLongPress ? (e) => { try { haptic.medium(); } catch { /* ignore */ } onLongPress(e); } : undefined}
     >
       <Animated.View style={[inner, a, disabled && { opacity: 0.4 }]}>{children}</Animated.View>
     </Pressable>

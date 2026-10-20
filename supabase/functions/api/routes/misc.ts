@@ -125,3 +125,15 @@ export async function reshootMissing(_req: Request, caller: Caller) {
   }
   return json({ ok: true, queued });
 }
+
+/** Breadcrumbs from the app (pre-auth allowed). Small, schema-light, service-role write only. */
+export async function clientLog(req: Request) {
+  const raw = await req.text();
+  if (raw.length > 24_000) throw new HttpError(413, 'Too large');
+  let body: any = {};
+  try { body = JSON.parse(raw || '{}'); } catch { throw new HttpError(400, 'Bad JSON'); }
+  const events = Array.isArray(body.events) ? body.events.slice(0, 60) : [];
+  const device = body.device && typeof body.device === 'object' ? body.device : {};
+  if (events.length) await admin.from('client_logs').insert({ device, events });
+  return json({ ok: true });
+}

@@ -2,14 +2,16 @@ import * as Haptics from 'expo-haptics';
 import { Platform } from 'react-native';
 import { usePrefs } from '@/state/prefs';
 
-const on = () => Platform.OS !== 'web' && usePrefs.getState().hapticsOn;
+const on = () => { try { return Platform.OS !== 'web' && usePrefs.getState().hapticsOn; } catch { return false; } };
+// a haptic must never break the action it decorates
+const safe = (f: () => Promise<unknown>) => { try { if (on()) f().catch(() => {}); } catch { /* ignore */ } };
 
 export const haptic = {
-  tick: () => { if (on()) Haptics.selectionAsync().catch(() => {}); },
-  light: () => { if (on()) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); },
-  medium: () => { if (on()) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {}); },
-  heavy: () => { if (on()) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {}); },
-  rigid: () => { if (on()) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Rigid).catch(() => {}); },
-  success: () => { if (on()) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {}); },
-  warn: () => { if (on()) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {}); },
+  tick: () => safe(() => Haptics.selectionAsync()),
+  light: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)),
+  medium: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)),
+  heavy: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)),
+  rigid: () => safe(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Rigid)),
+  success: () => safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)),
+  warn: () => safe(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)),
 };

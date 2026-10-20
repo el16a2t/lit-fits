@@ -24,9 +24,19 @@ import { ToastHost } from '@/components/sheet';
 import { queryClient, useRealtimeSync } from '@/lib/queries';
 import { DEMO, supabase } from '@/lib/supabase';
 import { useCaptureWorker } from '@/state/capture';
+import { errorInfo, trace } from '@/lib/diag';
 import { ThemeProvider, useTheme } from '@/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Breadcrumb every launch and every uncaught error, so real-device problems can be diagnosed remotely.
+trace('app:start');
+try {
+  const g = globalThis as any;
+  const prev = g.ErrorUtils?.getGlobalHandler?.();
+  g.ErrorUtils?.setGlobalHandler?.((e: unknown, fatal?: boolean) => { trace('app:uncaught', { fatal: !!fatal, ...errorInfo(e) }); prev?.(e, fatal); });
+  g.HermesInternal?.enablePromiseRejectionTracker?.({ allRejections: true, onUnhandled: (_id: number, e: unknown) => trace('app:unhandled-rejection', errorInfo(e)) });
+} catch { /* ignore */ }
 
 const persister = createAsyncStoragePersister({ storage: AsyncStorage, key: 'litfits.cache', throttleTime: 2000 });
 
@@ -34,7 +44,7 @@ export function useSession() {
   const [session, setSession] = useState<Session | null | undefined>(DEMO ? ({ user: { id: 'demo' } } as Session) : undefined);
   useEffect(() => {
     if (DEMO) return;
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    supabase.auth.getSession().then(({ data }) => { trace('auth:session', { signedIn: !!data.session }); setSession(data.session); }).catch((e) => { trace('auth:session:error', errorInfo(e)); setSession(null); });
     const { data } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => data.subscription.unsubscribe();
   }, []);
