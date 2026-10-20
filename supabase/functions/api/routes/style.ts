@@ -1,5 +1,5 @@
 // Style intelligence: weekly trend brief (web research) and the learned Style DNA.
-import { admin, background, Caller, HttpError, json, MODELS } from '../lib/core.ts';
+import { admin, background, Caller, enqueue, HttpError, json, MODELS } from '../lib/core.ts';
 import { claude, jsonFrom } from '../lib/anthropic.ts';
 import { loadContext, todayString } from '../lib/context.ts';
 import { ADAM_DEFAULT_SEED, STYLE_CANON } from '../lib/prompts.ts';
@@ -12,7 +12,7 @@ async function researchWithFallback(req: Parameters<typeof claude>[0], domains: 
   let allowed = [...domains];
   const meta = { owner: null, fn: 'trends.research' };
   for (let i = 0; i < 4; i++) {
-    const tools = [{ type: 'web_search_20260318', name: 'web_search', max_uses: 8, allowed_domains: allowed }];
+    const tools = [{ type: 'web_search_20260318', name: 'web_search', max_uses: 6, allowed_domains: allowed }];
     try {
       let res = await claude({ ...req, tools }, meta);
       // long server-side search loops can pause; hand the partial turn back so it carries on
@@ -32,19 +32,21 @@ async function researchWithFallback(req: Parameters<typeof claude>[0], domains: 
   throw new Error('web research unavailable');
 }
 
-async function buildTrendBrief(seed: string) {
+// Two separate invocations (research → distil) so neither leg can outrun the function's time budget.
+// Readers only ever see rows that have a summary, i.e. finished briefs.
+async function researchTrends(seed: string) {
   const today = todayString();
-  // 1) research with live web search (citations on)
   const research = await researchWithFallback({
     model: MODELS.fast,
-    max_tokens: 12000,
-    output_config: { effort: 'medium' },
+    max_tokens: 10000,
+    output_config: { effort: 'low' },
     messages: [{
       role: 'user',
       content: `Today is ${today}. Research what respected menswear editors are saying RIGHT NOW about this season (and the season ahead): Mr Porter (The Journal), GQ / British GQ, Highsnobiety, British Vogue, Opumo, and Derek Guy (Die, Workwear!) for tailoring and smart dressing. GQ and Vogue can't be searched directly, so pick up their views where the other outlets report them. Focus on wearable, considered menswear — minimal smart-casual, workwear, quiet luxury, technical/gorpcore, good denim, boots, knitwear, outerwear, trainers — not runway costume.\n\nThe reader's taste: ${seed}\n\nWrite concise research notes: key themes, colours, fabrics, silhouettes/fits, pieces, styling moves, and what's fading. Note who said what.`,
     }],
   }, SOURCES);
-  const notes = research.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
+  // cited answers arrive as many consecutive text segments of one flowing answer
+  const notes = research.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
   const sources: { title: string; url: string }[] = [];
   for (const b of research.content as any[]) {
     for (const c of b.citations ?? []) if (c.url && !sources.find((s) => s.url === c.url)) sources.push({ title: c.title ?? c.url, url: c.url });
@@ -52,7 +54,18 @@ async function buildTrendBrief(seed: string) {
       for (const r of b.content) if (r.url && sources.length < 30 && !sources.find((s) => s.url === r.url)) sources.push({ title: r.title ?? r.url, url: r.url });
     }
   }
-  // 2) distil into a structured brief tailored to him
+  if (!notes.trim()) throw new Error('research returned no notes');
+  const { data: row, error } = await admin.from('trend_briefs').insert({ content: { stage: 'notes', notes, seed }, sources: sources.slice(0, 24) }).select('id').single();
+  if (error || !row) throw new Error(`save notes: ${error?.message}`);
+  await enqueue('style/trends', { distil: row.id });
+  return row.id as string;
+}
+
+async function distilTrends(id: string) {
+  const { data: row } = await admin.from('trend_briefs').select('*').eq('id', id).single();
+  if (!row) throw new HttpError(404, 'brief not found');
+  if (row.summary) return row.content;
+  const { notes, seed } = row.content as { notes: string; seed: string };
   const brief = await claude({
     model: MODELS.fast,
     max_tokens: 6000,
@@ -83,17 +96,20 @@ async function buildTrendBrief(seed: string) {
     messages: [{ role: 'user', content: `Reader's taste: ${seed}\n\nResearch notes:\n${notes}\n\nTurn this into a tight, practical trend brief for the reader. Keep only what suits him.` }],
   }, { owner: null, fn: 'trends.distil' });
   const content = jsonFrom<any>(brief);
-  await admin.from('trend_briefs').insert({ season: content.season, summary: `${content.headline}\n${content.summary}`, content, sources: sources.slice(0, 24) });
+  await admin.from('trend_briefs').update({ season: content.season, summary: `${content.headline}\n${content.summary}`, content }).eq('id', id);
   return content;
 }
 
 export async function trends(req: Request, caller: Caller) {
+  const body = await req.json().catch(() => ({}));
+  if (body.distil) {
+    if (!caller.internal) throw new HttpError(403, 'Internal only');
+    return json(await distilTrends(String(body.distil)));
+  }
   const owner = caller.userId;
   const { data: profile } = owner ? await admin.from('profiles').select('style_seed').eq('id', owner).maybeSingle() : { data: null };
   const seed = profile?.style_seed || ADAM_DEFAULT_SEED;
-  const body = await req.json().catch(() => ({}));
-  if (body.wait) return json(await buildTrendBrief(seed));
-  background(buildTrendBrief(seed));
+  background(researchTrends(seed));
   return json({ ok: true, queued: true });
 }
 

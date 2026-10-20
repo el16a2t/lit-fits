@@ -151,9 +151,10 @@ export async function pack(req: Request, caller: Caller) {
   const { ctx, system } = await systemFor(owner, weather);
   const res = await claude({
     model: MODELS.stylist,
-    max_tokens: 16000,
+    max_tokens: 14000,
     output_config: {
-      effort: 'medium',
+      // low keeps a full trip plan inside the request time budget; Opus is still thorough here
+      effort: 'low',
       format: {
         type: 'json_schema',
         schema: {

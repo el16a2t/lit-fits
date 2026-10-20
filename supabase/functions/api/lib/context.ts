@@ -48,7 +48,7 @@ export async function loadContext(owner: string, opts: { includeDescriptions?: b
       .eq('owner', owner).eq('archived', false).neq('status', 'draft').order('number'),
     admin.from('look_items').select('item_id').eq('owner', owner),
     admin.from('profiles').select('*').eq('id', owner).maybeSingle(),
-    admin.from('trend_briefs').select('summary,content,created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    admin.from('trend_briefs').select('summary,content,created_at').not('summary', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
   const list = (items ?? []) as WardrobeItem[];
   const use = new Map<string, number>();

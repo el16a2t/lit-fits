@@ -274,7 +274,7 @@ export const profile = {
 
 export async function latestBrief(): Promise<TrendBrief | null> {
   if (DEMO) return demoStore.brief();
-  return check(await supabase.from('trend_briefs').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle()) as TrendBrief | null;
+  return check(await supabase.from('trend_briefs').select('*').not('summary', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle()) as TrendBrief | null;
 }
 
 export async function monthSpend(): Promise<{ usd: number; images: number; calls: number }> {

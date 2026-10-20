@@ -36,23 +36,112 @@ function headers() {
   };
 }
 
+/**
+ * One Messages API call, always streamed under the hood: long requests (web research, big plans) can sit
+ * silent for minutes when non-streaming and get their connection reset. Returns the assembled message.
+ */
 export async function claude(req: ClaudeRequest, meta: { owner: string | null; fn: string }): Promise<ClaudeResponse> {
   let lastErr = '';
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(API, { method: 'POST', headers: headers(), body: JSON.stringify(req) });
-    if (res.ok) {
-      const data = (await res.json()) as ClaudeResponse;
+    try {
+      const msg = await streamToMessage(req);
       await meter(meta.owner, meta.fn, req.model, {
-        input: (data.usage.input_tokens ?? 0) + (data.usage.cache_creation_input_tokens ?? 0) + (data.usage.cache_read_input_tokens ?? 0) * 0.1,
-        output: data.usage.output_tokens,
+        input: (msg.usage.input_tokens ?? 0) + (msg.usage.cache_creation_input_tokens ?? 0) + (msg.usage.cache_read_input_tokens ?? 0) * 0.1,
+        output: msg.usage.output_tokens,
       }).catch(() => {});
-      return data;
+      return msg;
+    } catch (e) {
+      const err = e as Error & { status?: number; retryable?: boolean };
+      lastErr = err.message;
+      if (!err.retryable) break;
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
     }
-    lastErr = `${res.status} ${await res.text()}`;
-    if (![429, 500, 502, 503, 504, 529].includes(res.status)) break;
-    await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
   }
   throw new Error(`Claude error: ${lastErr.slice(0, 800)}`);
+}
+
+class ClaudeHttpError extends Error {
+  constructor(message: string, public status: number, public retryable: boolean) { super(message); }
+}
+
+async function streamToMessage(req: ClaudeRequest): Promise<ClaudeResponse> {
+  let res: Response;
+  try {
+    res = await fetch(API, { method: 'POST', headers: headers(), body: JSON.stringify({ ...req, stream: true }) });
+  } catch (e) {
+    throw new ClaudeHttpError(`network: ${(e as Error).message}`, 0, true);
+  }
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '');
+    throw new ClaudeHttpError(`${res.status} ${text}`, res.status, [429, 500, 502, 503, 504, 529].includes(res.status));
+  }
+  // deno-lint-ignore no-explicit-any
+  const blocks: any[] = [];
+  const json: Record<number, string> = {};
+  const usage: ClaudeResponse['usage'] = { input_tokens: 0, output_tokens: 0 };
+  let stop = 'end_turn';
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = '';
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const line = chunk.split('\n').find((l) => l.startsWith('data:'));
+        if (!line) continue;
+        const payload = line.slice(5).trim();
+        if (!payload) continue;
+        const ev = JSON.parse(payload) as StreamEvent;
+        switch (ev.type) {
+          case 'message_start':
+            Object.assign(usage, ev.message?.usage ?? {});
+            break;
+          case 'content_block_start': {
+            const cb = { ...ev.content_block };
+            if (cb.type === 'text') cb.text = cb.text ?? '';
+            if (cb.type === 'thinking') { cb.thinking = cb.thinking ?? ''; cb.signature = cb.signature ?? ''; }
+            if (cb.type === 'tool_use' || cb.type === 'server_tool_use') json[ev.index] = '';
+            blocks[ev.index] = cb;
+            break;
+          }
+          case 'content_block_delta': {
+            const cb = blocks[ev.index];
+            const d = ev.delta;
+            if (!cb) break;
+            if (d.type === 'text_delta') cb.text += d.text;
+            else if (d.type === 'input_json_delta') json[ev.index] = (json[ev.index] ?? '') + d.partial_json;
+            else if (d.type === 'thinking_delta') cb.thinking += d.thinking;
+            else if (d.type === 'signature_delta') cb.signature += d.signature;
+            else if (d.type === 'citations_delta') (cb.citations ??= []).push(d.citation);
+            break;
+          }
+          case 'content_block_stop': {
+            const cb = blocks[ev.index];
+            if (cb && ev.index in json) {
+              try { cb.input = json[ev.index] ? JSON.parse(json[ev.index]) : (cb.input ?? {}); } catch { cb.input = cb.input ?? {}; }
+            }
+            break;
+          }
+          case 'message_delta':
+            stop = ev.delta?.stop_reason ?? stop;
+            if (ev.usage) Object.assign(usage, Object.fromEntries(Object.entries(ev.usage).filter(([, v]) => v != null)));
+            break;
+          case 'error': {
+            const type = ev.error?.type ?? 'error';
+            throw new ClaudeHttpError(`${type}: ${ev.error?.message ?? ''}`, 0, type === 'overloaded_error' || type === 'api_error');
+          }
+        }
+      }
+    }
+  } catch (e) {
+    if (e instanceof ClaudeHttpError) throw e;
+    throw new ClaudeHttpError(`stream: ${(e as Error).message}`, 0, true);
+  }
+  return { content: blocks.filter(Boolean), stop_reason: stop, usage };
 }
 
 /** Returns the parsed JSON of the final text block (for output_config.format json_schema requests). */
