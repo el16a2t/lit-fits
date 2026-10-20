@@ -21,7 +21,7 @@ export interface ClaudeRequest {
   messages: Msg[];
   tools?: unknown[];
   tool_choice?: unknown;
-  thinking?: { type: 'adaptive' | 'disabled' };
+  thinking?: { type: 'adaptive' | 'disabled' | 'between_tools' };
   output_config?: { effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; format?: unknown };
 }
 
@@ -64,10 +64,25 @@ class ClaudeHttpError extends Error {
   constructor(message: string, public status: number, public retryable: boolean) { super(message); }
 }
 
+/**
+ * "No up-front thinking" is spelled differently per model: Sonnet 5.5 takes `between_tools`, Haiku 5.5 takes
+ * `disabled`, and Opus 5.5 always thinks (the field must be left off). Call sites just say `disabled`.
+ */
+export function normaliseThinking(req: ClaudeRequest): ClaudeRequest {
+  if (req.thinking?.type !== 'disabled') return req;
+  const m = req.model;
+  if (m.startsWith('claude-sonnet-5-5')) return { ...req, thinking: { type: 'between_tools' } };
+  if (m.startsWith('claude-opus-5-5') || m.startsWith('claude-fable') || m.startsWith('claude-mythos')) {
+    const { thinking: _drop, ...rest } = req;
+    return rest;
+  }
+  return req;
+}
+
 async function streamToMessage(req: ClaudeRequest): Promise<ClaudeResponse> {
   let res: Response;
   try {
-    res = await fetch(API, { method: 'POST', headers: headers(), body: JSON.stringify({ ...req, stream: true }) });
+    res = await fetch(API, { method: 'POST', headers: headers(), body: JSON.stringify({ ...normaliseThinking(req), stream: true }) });
   } catch (e) {
     throw new ClaudeHttpError(`network: ${(e as Error).message}`, 0, true);
   }
@@ -164,7 +179,7 @@ export interface StreamEvent {
 
 /** Streams raw SSE events from the Messages API. */
 export async function* claudeStream(req: ClaudeRequest, meta: { owner: string | null; fn: string }): AsyncGenerator<StreamEvent> {
-  const res = await fetch(API, { method: 'POST', headers: headers(), body: JSON.stringify({ ...req, stream: true }) });
+  const res = await fetch(API, { method: 'POST', headers: headers(), body: JSON.stringify({ ...normaliseThinking(req), stream: true }) });
   if (!res.ok || !res.body) throw new Error(`Claude stream error: ${res.status} ${(await res.text()).slice(0, 500)}`);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = '';
