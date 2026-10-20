@@ -43,8 +43,13 @@ jobs:
         run: npx tsc --noEmit
       - name: Link EAS project (first run only)
         run: |
-          npx --yes eas-cli@latest init --non-interactive --force
-          npx --yes eas-cli@latest update:configure --platform android --non-interactive || true
+          # only touch app.json when the link is genuinely missing, so the native fingerprint stays stable
+          if ! node -e "process.exit(require('./app.json').expo.extra?.eas?.projectId ? 0 : 1)"; then
+            npx --yes eas-cli@latest init --non-interactive --force
+          fi
+          if ! node -e "process.exit(require('./app.json').expo.updates?.url ? 0 : 1)"; then
+            npx --yes eas-cli@latest update:configure --platform android --non-interactive || true
+          fi
           if ! git diff --quiet -- app.json; then
             git config user.name "lit-fits-bot"; git config user.email "bot@users.noreply.github.com"
             git add app.json

@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { processingLabel } from '@/lib/format';
+import { useSignedUrl } from '@/lib/queries';
 import type { Item } from '@/lib/types';
 import { useTheme } from '@/theme';
 import { Icon } from './icons';
@@ -32,6 +33,9 @@ export function ItemImage({ item, mode, view, small, style, shadow = true, showS
   const { c } = useTheme();
   const url = pieceUrl(item, { mode, view, small });
   const label = showStatus ? processingLabel(item) : null;
+  // until (or unless) the studio shot exists, show his own photo so the piece is never invisible
+  const rawPath = url ? null : (view === 'back' ? item.photos?.back : null) ?? item.photos?.front ?? item.photos?.side ?? null;
+  const raw = useSignedUrl(rawPath);
   return (
     <View style={[{ alignItems: 'center', justifyContent: 'center' }, style]}>
       {url ? (
@@ -46,6 +50,16 @@ export function ItemImage({ item, mode, view, small, style, shadow = true, showS
             recyclingKey={url}
           />
         </View>
+      ) : raw.data ? (
+        <View style={{ width: '86%', height: '86%', borderRadius: 3, overflow: 'hidden', backgroundColor: c.surface }}>
+          <Image source={{ uri: raw.data }} style={{ width: '100%', height: '100%', opacity: item.status === 'failed' ? 0.9 : 0.72 }} contentFit="cover" transition={transition} cachePolicy="memory-disk" recyclingKey={rawPath ?? undefined} />
+          {item.status === 'failed' && showStatus ? (
+            <View style={{ position: 'absolute', bottom: 6, left: 6, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: c.bg, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 2 }}>
+              <Icon name="camera" size={12} color={c.muted} />
+              <Label>Original photo</Label>
+            </View>
+          ) : null}
+        </View>
       ) : item.status === 'failed' ? (
         <View style={{ alignItems: 'center', gap: 6 }}>
           <Icon name="camera" color={c.muted} />
@@ -54,7 +68,7 @@ export function ItemImage({ item, mode, view, small, style, shadow = true, showS
       ) : (
         <Shimmer style={{ width: '62%', height: '72%', borderRadius: 2 }} />
       )}
-      {label && !url ? (
+      {label && !url && !(item.status === 'failed' && raw.data) ? (
         <View style={{ position: 'absolute', bottom: 8, left: 8 }}>
           <Thinking label={label} />
         </View>
