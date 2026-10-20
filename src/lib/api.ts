@@ -53,7 +53,17 @@ export async function call<T>(route: string, body: unknown = {}, opts: { anon?: 
   const t0 = Date.now();
   trace('api:start', { route });
   try {
-    const res = await fetchWithTimeout(`${FUNCTIONS_URL}/${route}`, { method: 'POST', headers: await authHeader(!opts.anon), body: JSON.stringify(body) }, opts.timeoutMs);
+    const send = async () => fetchWithTimeout(`${FUNCTIONS_URL}/${route}`, { method: 'POST', headers: await authHeader(!opts.anon), body: JSON.stringify(body) }, opts.timeoutMs);
+    let res: Response;
+    try {
+      res = await send();
+    } catch (e) {
+      // DNS blips (e.g. switching networks) mean the request never left the phone, so one quiet retry is safe.
+      if (!(e instanceof ApiError && /resolve host|UnknownHost|ENOTFOUND/i.test(e.message))) throw e;
+      trace('api:retry-dns', { route });
+      await new Promise((r) => setTimeout(r, 1500));
+      res = await send();
+    }
     const text = await res.text();
     let data: any = null;
     try { data = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
