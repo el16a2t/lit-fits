@@ -156,13 +156,16 @@ export function Screen({ children, style, edges = ['top'], grain = true }: { chi
 
 export function Grain({ opacity }: { opacity?: number }) {
   const { c } = useTheme();
+  // The wrapper View carries pointerEvents: on Android, Image ignores pointerEvents="none" (ReactImageView isn't a
+  // ReactPointerEventsView), so an Image overlay silently becomes the target of every tap above it.
   return (
-    <RNImage
-      source={require('@/../assets/images/grain.png')}
-      resizeMode="repeat"
-      style={[StyleSheet.absoluteFill, { opacity: opacity ?? c.grainOpacity, width: '100%', height: '100%' }]}
-      pointerEvents="none"
-    />
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <RNImage
+        source={require('@/../assets/images/grain.png')}
+        resizeMode="repeat"
+        style={[StyleSheet.absoluteFill, { opacity: opacity ?? c.grainOpacity }]}
+      />
+    </View>
   );
 }
 
