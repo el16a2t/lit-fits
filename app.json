@@ -1,0 +1,92 @@
+{
+  "expo": {
+    "name": "Lit Fits",
+    "slug": "lit-fits",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "litfits",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#F2F0EB",
+    "android": {
+      "package": "com.adamthompson.litfits",
+      "adaptiveIcon": {
+        "backgroundColor": "#111111",
+        "foregroundImage": "./assets/images/adaptive-foreground.png",
+        "monochromeImage": "./assets/images/adaptive-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": true,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {
+      "output": "single",
+      "favicon": "./assets/images/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#111111",
+          "image": "./assets/images/splash-mark.png",
+          "imageWidth": 140
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Lit Fits uses the camera to photograph pieces in your wardrobe.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Lit Fits can import photos of your clothes from your library."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Lit Fits uses your rough location to dress you for today's weather."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "buildArchs": [
+              "arm64-v8a"
+            ]
+          }
+        }
+      ],
+      "expo-font",
+      "expo-updates",
+      "./plugins/withGradleTuning"
+    ],
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "supabaseUrl": "https://xnfozdpgszotyeaeqeqy.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhuZm96ZHBnc3pvdHllYWVxZXF5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0Mzk4ODUsImV4cCI6MjEwODAxNTg4NX0.WvXJpPjuCPUWnYuFzsWN-tmIsC04_u0kQ_MEX3a2uC8"
+    }
+  }
+}

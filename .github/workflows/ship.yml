@@ -1,0 +1,136 @@
+name: ship
+# Every push to main:
+#   1. typecheck
+#   2. if native code/config changed (Expo fingerprint differs from the last release) → build a signed APK and publish a GitHub Release
+#      otherwise → push an over-the-air update to installed apps (EAS Update, channel "production")
+#   3. if the edge function changed and SUPABASE_ACCESS_TOKEN is set → deploy it
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', 'lab/**']
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Build a fresh APK even if native code is unchanged'
+        type: boolean
+        default: true
+
+concurrency:
+  group: ship-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+  NODE_OPTIONS: --max-old-space-size=6144
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      native_changed: ${{ steps.fp.outputs.changed }}
+      fingerprint: ${{ steps.fp.outputs.hash }}
+      functions_changed: ${{ steps.fn.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Link EAS project (first run only)
+        run: |
+          npx --yes eas-cli@latest init --non-interactive --force
+          npx --yes eas-cli@latest update:configure --platform android --non-interactive || true
+          if ! git diff --quiet -- app.json; then
+            git config user.name "lit-fits-bot"; git config user.email "bot@users.noreply.github.com"
+            git add app.json
+            git commit -m "chore: link EAS project [skip ci]"
+            git push
+          fi
+      - name: Native fingerprint
+        id: fp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          HASH=$(node node_modules/@expo/fingerprint/bin/cli.js fingerprint:generate . | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).hash))")
+          LAST=$(gh release view --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null | grep -o 'fingerprint:[a-f0-9]*' | cut -d: -f2 || true)
+          echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          if [ "$HASH" != "$LAST" ] || [ "${{ inputs.force_build }}" = "true" ] || [[ "${{ github.event.head_commit.message }}" == *"[build]"* ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "fingerprint $HASH (last release: ${LAST:-none})"
+      - name: Did the backend change?
+        id: fn
+        run: |
+          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^supabase/functions/'; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+
+  apk:
+    needs: check
+    if: needs.check.outputs.native_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - run: npm ci --no-audit --no-fund
+      - name: Build signed APK (EAS local build; keystore managed by EAS)
+        run: npx --yes eas-cli@latest build --local --platform android --profile preview --non-interactive --output ${{ github.workspace }}/lit-fits.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Lit Fits · build ${{ github.run_number }}
+          make_latest: true
+          files: lit-fits.apk
+          body: |
+            Install: open this page on your Pixel and tap **lit-fits.apk** (allow "install unknown apps" for your browser the first time).
+            Commit: ${{ github.sha }}
+            ${{ github.event.head_commit.message }}
+
+            fingerprint:${{ needs.check.outputs.fingerprint }}
+
+  update:
+    needs: check
+    if: needs.check.outputs.native_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: main }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci --no-audit --no-fund
+      - name: Over-the-air update
+        run: npx --yes eas-cli@latest update --channel production --environment production --platform android --non-interactive --message "${{ github.event.head_commit.message || 'manual' }}"
+
+  backend:
+    needs: check
+    if: needs.check.outputs.functions_changed == 'true'
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        if: env.SUPABASE_ACCESS_TOKEN != ''
+        with: { version: latest }
+      - name: Deploy edge function
+        if: env.SUPABASE_ACCESS_TOKEN != ''
+        run: supabase functions deploy api --project-ref xnfozdpgszotyeaeqeqy --use-api
