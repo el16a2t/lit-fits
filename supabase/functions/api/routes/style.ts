@@ -10,9 +10,18 @@ const SOURCES = ['mrporter.com', 'highsnobiety.com', 'opumo.com', 'dieworkwear.c
 
 async function researchWithFallback(req: Parameters<typeof claude>[0], domains: string[]) {
   let allowed = [...domains];
-  for (let i = 0; i < 3; i++) {
+  const meta = { owner: null, fn: 'trends.research' };
+  for (let i = 0; i < 4; i++) {
+    const tools = [{ type: 'web_search_20260318', name: 'web_search', max_uses: 8, allowed_domains: allowed }];
     try {
-      return await claude({ ...req, tools: [{ type: 'web_search_20260318', name: 'web_search', max_uses: 8, allowed_domains: allowed }] }, { owner: null, fn: 'trends.research' });
+      let res = await claude({ ...req, tools }, meta);
+      // long server-side search loops can pause; hand the partial turn back so it carries on
+      const content = [...res.content];
+      for (let k = 0; k < 3 && res.stop_reason === 'pause_turn'; k++) {
+        res = await claude({ ...req, tools, messages: [...req.messages, { role: 'assistant', content: content as any }] }, meta);
+        content.push(...res.content);
+      }
+      return { ...res, content };
     } catch (e) {
       const m = String((e as Error).message).match(/not accessible to our user agent: \[([^\]]*)\]/);
       if (!m) throw e;
@@ -32,7 +41,7 @@ async function buildTrendBrief(seed: string) {
     output_config: { effort: 'medium' },
     messages: [{
       role: 'user',
-      content: `Today is ${today}. Research what respected menswear editors are saying RIGHT NOW about this season (and the season ahead): Mr Porter (The Journal), GQ / British GQ, Highsnobiety, British Vogue, Opumo, and Derek Guy (Die, Workwear!) for tailoring and smart dressing. Focus on wearable, considered menswear — minimal smart-casual, workwear, quiet luxury, technical/gorpcore, good denim, boots, knitwear, outerwear, trainers — not runway costume.\n\nThe reader's taste: ${seed}\n\nWrite concise research notes: key themes, colours, fabrics, silhouettes/fits, pieces, styling moves, and what's fading. Note who said what.`,
+      content: `Today is ${today}. Research what respected menswear editors are saying RIGHT NOW about this season (and the season ahead): Mr Porter (The Journal), GQ / British GQ, Highsnobiety, British Vogue, Opumo, and Derek Guy (Die, Workwear!) for tailoring and smart dressing. GQ and Vogue can't be searched directly, so pick up their views where the other outlets report them. Focus on wearable, considered menswear — minimal smart-casual, workwear, quiet luxury, technical/gorpcore, good denim, boots, knitwear, outerwear, trainers — not runway costume.\n\nThe reader's taste: ${seed}\n\nWrite concise research notes: key themes, colours, fabrics, silhouettes/fits, pieces, styling moves, and what's fading. Note who said what.`,
     }],
   }, SOURCES);
   const notes = research.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
