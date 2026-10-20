@@ -19,8 +19,16 @@ export default function Welcome() {
 
   const [step, setStep] = useState<string | null>(null);
 
+  const ready = email.trim().includes('@') && password.length >= 8;
+
   const go = async () => {
     trace('welcome:tap', { mode, emailLen: email.trim().length, pwLen: password.length });
+    if (busy) return;
+    if (!ready) {
+      haptic.warn();
+      setErr(!email.trim().includes('@') ? 'Enter your email address.' : 'Your password needs at least 8 characters.');
+      return;
+    }
     setErr(null);
     setBusy(true);
     try {
@@ -76,7 +84,7 @@ export default function Welcome() {
               <Field label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" style={{ color: '#111' }} />
               <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry autoComplete={mode === 'create' ? 'new-password' : 'current-password'} style={{ color: '#111' }} hint={mode === 'create' ? '8+ characters. This app has exactly one user: you.' : undefined} />
               {err ? <Txt v="small" color={c.danger}>{err}</Txt> : null}
-              <Button label={busy ? (step ?? 'Working…') : mode === 'create' ? 'Create my wardrobe' : 'Sign in'} onPress={go} loading={busy} disabled={!email || password.length < 8} style={{ backgroundColor: '#111' }} fg="#F2F0EB" />
+              <Button label={busy ? (step ?? 'Working…') : mode === 'create' ? 'Create my wardrobe' : 'Sign in'} onPress={go} loading={busy} style={{ backgroundColor: '#111', opacity: ready || busy ? 1 : 0.45 }} fg="#F2F0EB" />
             </View>
             <Button kind="ghost" fg="#F2F0EB" label={mode === 'create' ? 'I already have an account' : 'First time here'} onPress={() => { setErr(null); setMode(mode === 'create' ? 'signin' : 'create'); }} style={{ alignSelf: 'center' }} />
           </Animated.View>

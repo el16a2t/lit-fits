@@ -1,6 +1,7 @@
-// React Native's Android HTTP client ships with no connect timeout, so a dead route (e.g. a black-holed IPv6
-// address) can stall a request for ~2 minutes before OkHttp tries the next address. A 10s connect timeout makes
-// it fall through to a working address quickly. Read/write stay unbounded so long AI responses still stream.
+// React Native's Android HTTP client (OkHttp 4.9, no "happy eyeballs") ships with no connect timeout, so a dead
+// route such as a black-holed IPv6 address can stall a request for ~2 minutes before the next address is tried.
+// Fix: try IPv4 addresses first, and cap connects at 10s so any other dead route falls through quickly.
+// Read/write stay unbounded so long AI responses still stream.
 const { withMainApplication } = require('expo/config-plugins');
 
 const MARKER = '// lit-fits: network timeouts';
@@ -11,6 +12,10 @@ const SNIPPET = `
         override fun createNewNetworkModuleClient(): okhttp3.OkHttpClient =
           com.facebook.react.modules.network.OkHttpClientProvider.createClientBuilder(this@MainApplication)
             .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .dns(object : okhttp3.Dns {
+              override fun lookup(hostname: String): List<java.net.InetAddress> =
+                okhttp3.Dns.SYSTEM.lookup(hostname).sortedBy { if (it is java.net.Inet4Address) 0 else 1 }
+            })
             .build()
       }
     )`;
