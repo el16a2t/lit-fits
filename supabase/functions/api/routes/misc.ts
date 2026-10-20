@@ -1,8 +1,8 @@
 // Bootstrap (single-owner account creation), wishlist concepts, signals.
-import { admin, background, BUCKET_PRIVATE, BUCKET_PUBLIC, Caller, HttpError, json, MODELS, ownerId, publicUrl, rid, upload } from '../lib/core.ts';
+import { admin, background, BUCKET_PRIVATE, BUCKET_PUBLIC, Caller, enqueue, HttpError, json, MODELS, ownerId, publicUrl, rid, upload } from '../lib/core.ts';
 import { generateImage } from '../lib/gemini.ts';
 import { decodeImage, keyOut, resize, toPng, trim, chooseKey } from '../lib/image.ts';
-import { productShotPrompt, aspectFor } from '../lib/prompts.ts';
+import { productShotPrompt, aspectFor, viewsFor } from '../lib/prompts.ts';
 import { SUBTYPE_MAP } from '../lib/taxonomy.ts';
 import { ADAM_DEFAULT_SEED } from '../lib/prompts.ts';
 
@@ -55,6 +55,9 @@ async function adoptLab(owner: string) {
     const modes = (o.item.wear_modes ?? []).map((m: any) => (m.key === 'base' && cover ? { ...m, url: cover.url, thumb: cover.thumb, ref: cover.ref, aspect: cover.aspect } : m));
     await admin.from('items').update({ photos, images, wear_modes: modes, cover_url: cover?.url ?? null, thumb_url: cover?.thumb ?? null, aspect: cover?.aspect ?? null }).eq('id', item.id);
     await admin.from('lab_runs').update({ status: 'adopted' }).eq('id', s.id);
+    // any studio shot that didn't make it pre-launch gets another go now
+    const missing = Object.keys(o.item.processing?.views ?? {}).filter((v) => !images[v]);
+    if (missing.length) await queueViews(item.id, missing).catch((e) => console.error('requeue', e));
     items++;
   }
   let twin = false;
@@ -99,4 +102,26 @@ export async function wishlistConcept(req: Request, caller: Caller) {
     } catch (e) { console.error('concept failed', e); }
   })());
   return json({ ok: true });
+}
+
+/** Marks views as queued and fans out one studio-shot job per view. */
+async function queueViews(itemId: string, views: string[]) {
+  for (const v of views) await admin.rpc('item_proc_set', { p_id: itemId, p_group: 'views', p_key: v, p_value: 'queued', p_error: null });
+  await admin.from('items').update({ status: 'processing' }).eq('id', itemId);
+  for (const v of views) await enqueue('item/process', { item_id: itemId, step: 'view', view: v });
+}
+
+/** Re-shoots every piece that has no studio photo yet (e.g. after image generation was unavailable). */
+export async function reshootMissing(_req: Request, caller: Caller) {
+  const { data: items } = await admin.from('items').select('id,subtype,photos,images,processing').eq('owner', caller.userId).eq('archived', false).is('cover_url', null).neq('status', 'draft');
+  let queued = 0;
+  for (const it of items ?? []) {
+    const photos = (it.photos ?? {}) as Record<string, string>;
+    if (!photos.front && !photos.side) continue;
+    const views = viewsFor(it.subtype).filter((v) => (v === 'back' ? !!photos.back : true)).filter((v) => !(it.images ?? {})[v]);
+    if (!views.length) continue;
+    await queueViews(it.id, views);
+    queued++;
+  }
+  return json({ ok: true, queued });
 }

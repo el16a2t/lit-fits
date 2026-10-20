@@ -42,6 +42,7 @@ export const api = {
   trends: () => call<{ ok: boolean }>('style/trends', {}),
   dna: () => call<{ ok: boolean }>('style/dna', {}),
   wishlistConcept: (id: string) => call<{ ok: boolean }>('wishlist/concept', { id }),
+  reshootMissing: () => call<{ ok: boolean; queued: number }>('items/reshoot-missing', {}),
 };
 
 export interface StylistHandlers {

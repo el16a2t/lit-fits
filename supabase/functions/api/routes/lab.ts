@@ -95,14 +95,20 @@ export async function lab(req: Request, caller: Caller, route: string) {
       const key = chooseKey(a.colours.map((c) => c.hex));
       const views = viewsFor(a.subtype).filter((v) => (v === 'back' ? !!photos.back : true));
       const images: Record<string, unknown> = {};
+      const image_errors: Record<string, string> = {};
+      // a failed studio shot never loses the catalogue record: the piece is adopted and re-shot later
       await Promise.all(views.map(async (v: View) => {
-        const primary = v === 'back' ? bytes.back : (v === 'side' ? (bytes.side ?? bytes.front) : (bytes.front ?? bytes.side));
-        const secondary = v === 'back' ? bytes.front : (bytes.back ?? null);
-        const out = await makeCutout({
-          kind: st.kind, view: v, key, name: a.name, colourName: a.colour_name, renderNotes: a.render_notes,
-          state: v === 'back' ? null : a.current_state, primary, secondary, model: body.model ?? MODELS.productImage, owner: null,
-        });
-        images[v] = { ...(await storeCutout(`seed-${v}`, out)), model: body.model ?? MODELS.productImage };
+        try {
+          const primary = v === 'back' ? bytes.back : (v === 'side' ? (bytes.side ?? bytes.front) : (bytes.front ?? bytes.side));
+          const secondary = v === 'back' ? bytes.front : (bytes.back ?? null);
+          const out = await makeCutout({
+            kind: st.kind, view: v, key, name: a.name, colourName: a.colour_name, renderNotes: a.render_notes,
+            state: v === 'back' ? null : a.current_state, primary, secondary, model: body.model ?? MODELS.productImage, owner: null,
+          });
+          images[v] = { ...(await storeCutout(`seed-${v}`, out)), model: body.model ?? MODELS.productImage };
+        } catch (e) {
+          image_errors[v] = String((e as Error)?.message ?? e).slice(0, 200);
+        }
       }));
       const cover_view = st.kind === 'shoe' ? 'side' : 'front';
       const main = a.colours?.[0]?.hex;
@@ -118,13 +124,14 @@ export async function lab(req: Request, caller: Caller, route: string) {
         cover_view,
         photos,
         images,
+        image_errors,
         item: {
           name: a.name, subtype: a.subtype, category: st.category, slot: st.slot, brand: a.brand, colour_name: a.colour_name, colours: a.colours,
           colour_family: a.colour_family, pattern: a.pattern, materials: a.materials, fabric_weight: a.fabric_weight, fit: a.fit, size: a.size,
           warmth: a.warmth, formality: a.formality, seasons: a.seasons, tags: a.tags, description: a.description, render_notes: a.render_notes, care: a.care,
           hue, lightness,
           wear_modes: (a.wear_modes ?? []).slice(0, 4).map((m, i) => ({ key: i === 0 ? 'base' : `m${i}`, label: m.label, description: m.description, status: i === 0 ? 'base' : 'suggested' })),
-          processing: { key, state: a.current_state, steps: { analysis: 'done' }, views: Object.fromEntries(views.map((v) => [v, 'done'])) },
+          processing: { key, state: a.current_state, steps: { analysis: 'done' }, views: Object.fromEntries(views.map((v) => [v, images[v] ? 'done' : 'failed'])) },
         },
       };
     }));

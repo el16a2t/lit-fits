@@ -7,7 +7,8 @@ import { Icon } from '@/components/icons';
 import { RenderImage } from '@/components/RenderImage';
 import { toast } from '@/components/sheet';
 import { Button, Chip, Field, Label, Press, Screen, Section, Segmented, Toggle, Txt } from '@/components/ui';
-import { useProfile, useSpend, useUpdateProfile } from '@/lib/queries';
+import { api } from '@/lib/api';
+import { useItems, useProfile, useSpend, useUpdateProfile } from '@/lib/queries';
 import { DEMO, supabase } from '@/lib/supabase';
 import { usePrefs } from '@/state/prefs';
 import { space, useTheme } from '@/theme';
@@ -53,6 +54,8 @@ export default function You() {
   useDebounced(extra, (v) => v !== (p?.render_settings?.extra_prompt ?? '') && commit({ render_settings: { ...(p?.render_settings ?? {}), extra_prompt: v } }), 1000);
   useDebounced(seed, (v) => v !== (p?.style_seed ?? '') && commit({ style_seed: v }), 1200);
 
+  const { data: allItems } = useItems();
+  const missingShots = (allItems ?? []).filter((i) => !i.cover_url && i.status !== 'processing' && i.status !== 'draft').length;
   const twin = p?.twin ?? {};
   const prefsRow = p?.preferences ?? {};
   const setPref = (k: 'laundry_tracking' | 'location_tracking', v: boolean) => update.mutate({ preferences: { ...prefsRow, [k]: v } });
@@ -122,6 +125,15 @@ export default function You() {
             <Toggle label="Track where things live" hint="A location field on each piece (wardrobe, box, storage unit)." value={prefsRow.location_tracking !== false} onChange={(v) => setPref('location_tracking', v)} />
             <Toggle label="Use today's weather" hint="The stylist and mixer dress you for the forecast." value={prefs.useWeather} onChange={(v) => prefs.set({ useWeather: v })} />
             <Toggle label="Haptics" value={prefs.hapticsOn} onChange={(v) => prefs.set({ hapticsOn: v })} />
+            {missingShots > 0 ? (
+              <View style={{ marginTop: space.md, gap: 6 }}>
+                <Txt v="small" color={c.muted}>{missingShots === 1 ? '1 piece is' : `${missingShots} pieces are`} still showing your original photo.</Txt>
+                <Button kind="secondary" label="Reshoot missing studio photos" icon="camera" onPress={async () => {
+                  try { const r = await api.reshootMissing(); toast(r.queued ? `Back in the studio: ${r.queued} piece${r.queued === 1 ? '' : 's'}` : 'Nothing to reshoot'); }
+                  catch (e) { toast((e as Error).message); }
+                }} />
+              </View>
+            ) : null}
           </View>
         </Section>
 

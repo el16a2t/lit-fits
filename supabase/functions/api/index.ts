@@ -5,7 +5,7 @@ import { stylist } from './routes/stylist.ts';
 import { complete, nameLook, pack, pairings } from './routes/assist.ts';
 import { buildTwin, render, renderUrl } from './routes/render.ts';
 import { dna, trends } from './routes/style.ts';
-import { bootstrap, wishlistConcept } from './routes/misc.ts';
+import { bootstrap, reshootMissing, wishlistConcept } from './routes/misc.ts';
 import { lab } from './routes/lab.ts';
 
 type Handler = (req: Request, caller: Awaited<ReturnType<typeof authenticate>>, route: string) => Promise<Response>;
@@ -23,6 +23,7 @@ const routes: Record<string, Handler> = {
   'style/trends': trends,
   'style/dna': dna,
   'wishlist/concept': wishlistConcept,
+  'items/reshoot-missing': reshootMissing,
 };
 
 Deno.serve(async (req) => {
