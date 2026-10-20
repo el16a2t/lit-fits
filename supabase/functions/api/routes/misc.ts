@@ -10,6 +10,10 @@ export async function bootstrap(req: Request) {
   const { email, password, name } = await req.json();
   if (await ownerId()) throw new HttpError(409, 'This Lit Fits already has an owner. Sign in instead.');
   if (!email || !password || String(password).length < 8) throw new HttpError(400, 'Email and a password of 8+ characters required');
+  const { data: allowed } = await admin.rpc('get_config', { k: 'owner_email' });
+  if (allowed && String(allowed).toLowerCase().trim() !== String(email).toLowerCase().trim()) {
+    throw new HttpError(403, 'This Lit Fits is reserved for its owner. Use the email it was set up for.');
+  }
   const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata: { name } });
   if (error || !data.user) throw new HttpError(400, error?.message ?? 'Could not create account');
   const uid = data.user.id;

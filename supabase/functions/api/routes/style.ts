@@ -4,21 +4,37 @@ import { claude, jsonFrom } from '../lib/anthropic.ts';
 import { loadContext, todayString } from '../lib/context.ts';
 import { ADAM_DEFAULT_SEED, STYLE_CANON } from '../lib/prompts.ts';
 
-const SOURCES = ['mrporter.com', 'gq.com', 'gq-magazine.co.uk', 'highsnobiety.com', 'vogue.co.uk', 'opumo.com', 'dieworkwear.com', 'permanentstyle.com', 'putthison.com', 'hypebeast.com'];
+// GQ and British Vogue block automated readers, so they're reached through other outlets' coverage.
+// Any other domain that starts refusing is dropped automatically and the search retried.
+const SOURCES = ['mrporter.com', 'highsnobiety.com', 'opumo.com', 'dieworkwear.com', 'permanentstyle.com', 'putthison.com', 'hypebeast.com', 'esquire.com', 'theguardian.com', 'ft.com', 'businessoffashion.com'];
+
+async function researchWithFallback(req: Parameters<typeof claude>[0], domains: string[]) {
+  let allowed = [...domains];
+  for (let i = 0; i < 3; i++) {
+    try {
+      return await claude({ ...req, tools: [{ type: 'web_search_20260318', name: 'web_search', max_uses: 8, allowed_domains: allowed }] }, { owner: null, fn: 'trends.research' });
+    } catch (e) {
+      const m = String((e as Error).message).match(/not accessible to our user agent: \[([^\]]*)\]/);
+      if (!m) throw e;
+      const blocked = m[1].split(',').map((x) => x.replace(/['"\s]/g, ''));
+      allowed = allowed.filter((d) => !blocked.includes(d));
+    }
+  }
+  throw new Error('web research unavailable');
+}
 
 async function buildTrendBrief(seed: string) {
   const today = todayString();
   // 1) research with live web search (citations on)
-  const research = await claude({
+  const research = await researchWithFallback({
     model: MODELS.fast,
     max_tokens: 12000,
     output_config: { effort: 'medium' },
-    tools: [{ type: 'web_search_20260318', name: 'web_search', max_uses: 8, allowed_domains: SOURCES }],
     messages: [{
       role: 'user',
       content: `Today is ${today}. Research what respected menswear editors are saying RIGHT NOW about this season (and the season ahead): Mr Porter (The Journal), GQ / British GQ, Highsnobiety, British Vogue, Opumo, and Derek Guy (Die, Workwear!) for tailoring and smart dressing. Focus on wearable, considered menswear — minimal smart-casual, workwear, quiet luxury, technical/gorpcore, good denim, boots, knitwear, outerwear, trainers — not runway costume.\n\nThe reader's taste: ${seed}\n\nWrite concise research notes: key themes, colours, fabrics, silhouettes/fits, pieces, styling moves, and what's fading. Note who said what.`,
     }],
-  }, { owner: null, fn: 'trends.research' });
+  }, SOURCES);
   const notes = research.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n');
   const sources: { title: string; url: string }[] = [];
   for (const b of research.content as any[]) {
