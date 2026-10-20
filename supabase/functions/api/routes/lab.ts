@@ -257,6 +257,17 @@ export async function lab(req: Request, caller: Caller, route: string) {
     throw new HttpError(400, 'what?');
   }
 
+  if (route === 'lab/logs') {
+    // recent device breadcrumbs + account status, for live support
+    const since = body.since ?? new Date(Date.now() - 3600_000).toISOString();
+    const [{ data: logs }, { count: owners }, { count: items }] = await Promise.all([
+      admin.from('client_logs').select('id,created_at,device,events').gt('created_at', since).order('created_at', { ascending: true }).limit(50),
+      admin.from('app_owner').select('user_id', { count: 'exact', head: true }),
+      admin.from('items').select('id', { count: 'exact', head: true }),
+    ]);
+    return json({ owners, items, logs });
+  }
+
   if (route === 'lab/sheet') {
     // tiny inline preview (base64 JPEG) of public cut-outs, for quick checks via SQL
     const tiles = [];
