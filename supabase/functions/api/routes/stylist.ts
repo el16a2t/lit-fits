@@ -36,6 +36,69 @@ export function normaliseLook(ctx: Ctx, input: any): LookOut | null {
 
 const lookSummary = (l: LookOut) => `[Look "${l.title}": ${l.items.map((i) => `#${i.number}${i.mode ? ` (${i.mode})` : ''}`).join(', ')}]`;
 
+export const stylistTurn = (prompt: string, constraints = '') =>
+  `${prompt}${constraints ? `\n\n(${constraints})` : ''}\n\nOpen with at most one short line, then call present_look for each look (default 3 unless I asked otherwise). End with one short closing line only if it adds something.`;
+
+export type StylistBlock = { type: 'text'; text: string } | { type: 'look'; look: LookOut };
+
+export function stylistRequest(system: Block[], convo: Msg[]) {
+  return { model: MODELS.stylist, max_tokens: 16000, output_config: { effort: 'medium' as const }, system, messages: convo, tools: [PRESENT_LOOK_TOOL] };
+}
+
+/**
+ * The stylist's tool loop: streams Claude, turns each present_look call into a validated look,
+ * and keeps going (replaying thinking blocks verbatim) until the model stops calling tools.
+ */
+export async function runStylist(ctx: Ctx, system: Block[], messages: Msg[], owner: string | null, send: (event: string, data: unknown) => void) {
+  const blocks: StylistBlock[] = [];
+  const looks: LookOut[] = [];
+  let convo = messages;
+  for (let turn = 0; turn < 4; turn++) {
+    const raw: any[] = []; // content blocks by index, replayed verbatim (incl. thinking signatures) on tool turns
+    let stop = 'end_turn';
+    for await (const ev of claudeStream(stylistRequest(system, convo), { owner, fn: 'stylist' })) {
+      if (ev.type === 'content_block_start') {
+        const cb = { ...ev.content_block };
+        if (cb.type === 'thinking') { cb.thinking = cb.thinking ?? ''; cb.signature = cb.signature ?? ''; send('status', { label: 'Thinking it through' }); }
+        if (cb.type === 'text') cb.text = '';
+        if (cb.type === 'tool_use') { cb._json = ''; send('status', { label: 'Pulling pieces' }); }
+        raw[ev.index] = cb;
+      } else if (ev.type === 'content_block_delta') {
+        const cb = raw[ev.index];
+        if (!cb) continue;
+        const d = ev.delta;
+        if (d.type === 'text_delta') { cb.text += d.text; send('text', { delta: d.text }); }
+        else if (d.type === 'input_json_delta') cb._json += d.partial_json;
+        else if (d.type === 'thinking_delta') cb.thinking += d.thinking;
+        else if (d.type === 'signature_delta') cb.signature += d.signature;
+      } else if (ev.type === 'content_block_stop') {
+        const cb = raw[ev.index];
+        if (!cb) continue;
+        if (cb.type === 'tool_use') {
+          try { cb.input = JSON.parse(cb._json || '{}'); } catch { cb.input = {}; }
+          delete cb._json;
+          const look = normaliseLook(ctx, cb.input);
+          if (look) { looks.push(look); blocks.push({ type: 'look', look }); send('look', { look, index: looks.length - 1 }); }
+        } else if (cb.type === 'text' && cb.text) {
+          blocks.push({ type: 'text', text: cb.text });
+          send('text_end', {});
+        }
+      } else if (ev.type === 'message_delta') {
+        stop = ev.delta?.stop_reason ?? stop;
+      } else if (ev.type === 'error') {
+        throw new Error(`stream error: ${ev.error?.type ?? ''} ${ev.error?.message ?? ''}`);
+      }
+    }
+    const assistantContent = raw.filter(Boolean).filter((b) => !(b.type === 'text' && !b.text));
+    if (stop !== 'tool_use') break;
+    // acknowledge tool calls and let the model continue (it may present more looks or close)
+    const results = assistantContent.filter((b) => b.type === 'tool_use').map((b) => ({ type: 'tool_result', tool_use_id: b.id, content: 'Shown to him.' }));
+    convo = [...convo, { role: 'assistant', content: assistantContent }, { role: 'user', content: results as any }];
+    if (looks.length >= 6) break;
+  }
+  return { blocks, looks };
+}
+
 export async function stylist(req: Request, caller: Caller) {
   const body = await req.json();
   const prompt: string = String(body.prompt ?? '').trim();
@@ -76,69 +139,16 @@ export async function stylist(req: Request, caller: Caller) {
     const text = [m.content ?? '', ...looks.map(lookSummary)].filter(Boolean).join('\n');
     if (text) messages.push({ role: m.role as 'user' | 'assistant', content: text });
   }
-  messages.push({
-    role: 'user',
-    content: `${prompt}${constraints ? `\n\n(${constraints})` : ''}\n\nOpen with at most one short line, then call present_look for each look (default 3 unless I asked otherwise). End with one short closing line only if it adds something.`,
-  });
+  messages.push({ role: 'user', content: stylistTurn(prompt, constraints) });
 
   const enc = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: string, data: unknown) => controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
-      const blocks: ({ type: 'text'; text: string } | { type: 'look'; look: LookOut })[] = [];
-      const looks: LookOut[] = [];
       send('meta', { thread_id: threadId });
       send('status', { label: 'Reading your rails' });
       try {
-        let convo = messages;
-        for (let turn = 0; turn < 4; turn++) {
-          const raw: any[] = []; // content blocks by index, replayed verbatim (incl. thinking signatures) on tool turns
-          let stop = 'end_turn';
-          for await (const ev of claudeStream({
-            model: MODELS.stylist,
-            max_tokens: 16000,
-            output_config: { effort: 'medium' },
-            system,
-            messages: convo,
-            tools: [PRESENT_LOOK_TOOL],
-          }, { owner, fn: 'stylist' })) {
-            if (ev.type === 'content_block_start') {
-              const cb = { ...ev.content_block };
-              if (cb.type === 'thinking') { cb.thinking = cb.thinking ?? ''; cb.signature = cb.signature ?? ''; send('status', { label: 'Thinking it through' }); }
-              if (cb.type === 'text') cb.text = '';
-              if (cb.type === 'tool_use') { cb._json = ''; send('status', { label: 'Pulling pieces' }); }
-              raw[ev.index] = cb;
-            } else if (ev.type === 'content_block_delta') {
-              const cb = raw[ev.index];
-              if (!cb) continue;
-              const d = ev.delta;
-              if (d.type === 'text_delta') { cb.text += d.text; send('text', { delta: d.text }); }
-              else if (d.type === 'input_json_delta') cb._json += d.partial_json;
-              else if (d.type === 'thinking_delta') cb.thinking += d.thinking;
-              else if (d.type === 'signature_delta') cb.signature += d.signature;
-            } else if (ev.type === 'content_block_stop') {
-              const cb = raw[ev.index];
-              if (!cb) continue;
-              if (cb.type === 'tool_use') {
-                try { cb.input = JSON.parse(cb._json || '{}'); } catch { cb.input = {}; }
-                delete cb._json;
-                const look = normaliseLook(ctx, cb.input);
-                if (look) { looks.push(look); blocks.push({ type: 'look', look }); send('look', { look, index: looks.length - 1 }); }
-              } else if (cb.type === 'text' && cb.text) {
-                blocks.push({ type: 'text', text: cb.text });
-                send('text_end', {});
-              }
-            } else if (ev.type === 'message_delta') {
-              stop = ev.delta?.stop_reason ?? stop;
-            }
-          }
-          const assistantContent = raw.filter(Boolean).filter((b) => !(b.type === 'text' && !b.text));
-          if (stop !== 'tool_use') break;
-          // acknowledge tool calls and let the model continue (it may present more looks or close)
-          const results = assistantContent.filter((b) => b.type === 'tool_use').map((b) => ({ type: 'tool_result', tool_use_id: b.id, content: 'Shown to him.' }));
-          convo = [...convo, { role: 'assistant', content: assistantContent }, { role: 'user', content: results as any }];
-          if (looks.length >= 6) break;
-        }
+        const { blocks, looks } = await runStylist(ctx, system, messages, owner, send);
         const content = blocks.filter((b) => b.type === 'text').map((b: any) => b.text).join('\n\n').trim();
         const { data: msg } = await admin.from('messages').insert({ thread_id: threadId, owner, role: 'assistant', content, looks, meta: { blocks } }).select('id').single();
         await admin.from('signals').insert({ owner, kind: 'prompt', text: prompt });

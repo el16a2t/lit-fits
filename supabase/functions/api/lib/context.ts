@@ -50,9 +50,22 @@ export async function loadContext(owner: string, opts: { includeDescriptions?: b
     admin.from('profiles').select('*').eq('id', owner).maybeSingle(),
     admin.from('trend_briefs').select('summary,content,created_at').not('summary', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
-  const list = (items ?? []) as WardrobeItem[];
+  return buildCtx({ items: (items ?? []) as WardrobeItem[], usage: usage ?? [], profile, brief, opts });
+}
+
+/** Pure context builder (also used by the internal dry-run against staged pieces). */
+export function buildCtx(input: {
+  items: WardrobeItem[];
+  usage: { item_id: string }[];
+  profile: Record<string, any> | null;
+  brief: { summary: string | null; content: unknown } | null;
+  opts?: { includeDescriptions?: boolean };
+}): Ctx {
+  const { profile, brief } = input;
+  const opts = input.opts ?? {};
+  const list = input.items;
   const use = new Map<string, number>();
-  for (const r of usage ?? []) use.set(r.item_id, (use.get(r.item_id) ?? 0) + 1);
+  for (const r of input.usage) use.set(r.item_id, (use.get(r.item_id) ?? 0) + 1);
   const laundryTracking = !!profile?.preferences?.laundry_tracking;
 
   const lines = list.map((it) => {

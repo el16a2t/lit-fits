@@ -6,6 +6,29 @@ import { chooseKey, contactSheet, decodeImage, fromBase64, resize, toBase64, toJ
 import { viewsFor, type View, renderPrompt, SCENES } from '../lib/prompts.ts';
 import { SUBTYPE_MAP } from '../lib/taxonomy.ts';
 import { generateImage, imagePart, type Part } from '../lib/gemini.ts';
+import { claude, jsonFrom } from '../lib/anthropic.ts';
+import { buildCtx, type WardrobeItem } from '../lib/context.ts';
+import { ADAM_DEFAULT_SEED } from '../lib/prompts.ts';
+import { completeRequest, forecast, nameRequest, packRequest, pairingsRequest, shapePairings, systemBlocks } from './assist.ts';
+import { normaliseLook, runStylist, stylistTurn } from './stylist.ts';
+
+/** Wardrobe context built from staged seed pieces, so every AI path can be exercised before an owner exists. */
+async function stagedCtx() {
+  const [{ data: seeds }, { data: brief }] = await Promise.all([
+    admin.from('lab_runs').select('id,output').eq('kind', 'seed_item').in('status', ['done', 'adopted']).order('created_at'),
+    admin.from('trend_briefs').select('summary,content').not('summary', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  const items: WardrobeItem[] = (seeds ?? []).map((s: any, i: number) => {
+    const it = s.output.item;
+    return {
+      id: s.id, number: i + 1, name: it.name, subtype: it.subtype, slot: it.slot, brand: it.brand, colour_name: it.colour_name,
+      pattern: it.pattern, materials: it.materials, fit: it.fit, warmth: it.warmth, formality: it.formality, seasons: it.seasons,
+      tags: it.tags, wear_modes: it.wear_modes, laundry: 'clean', location: null, description: it.description, favourite: false,
+      wear_count: 0, last_worn_on: null, thumb_url: null,
+    };
+  });
+  return buildCtx({ items, usage: [], profile: { display_name: 'Adam', style_seed: ADAM_DEFAULT_SEED }, brief });
+}
 
 async function labKey(): Promise<CryptoKey> {
   const { data } = await admin.rpc('get_config', { k: 'lab_key' });
@@ -194,6 +217,44 @@ export async function lab(req: Request, caller: Caller, route: string) {
     }
     const enc = await encryptBundle({ files });
     return new Response(enc, { headers: { 'content-type': 'application/octet-stream' } });
+  }
+
+  if (route === 'lab/dry') {
+    // {what: 'stylist'|'pairings'|'complete'|'pack'|'name', prompt?, weather?, destination?}
+    const ctx = await stagedCtx();
+    if (!ctx.items.length) throw new HttpError(409, 'No staged pieces yet');
+    const t0 = Date.now();
+    const done = (out: unknown) => json({ what: body.what, ms: Date.now() - t0, items: ctx.items.length, out });
+    switch (body.what) {
+      case 'stylist': {
+        const events: string[] = [];
+        const r = await runStylist(ctx, systemBlocks(ctx, body.weather), [{ role: 'user', content: stylistTurn(body.prompt ?? 'Three looks for a mild October weekend in London.') }], null, (e) => { if (e !== 'text') events.push(e); });
+        return done({ events, text: r.blocks.filter((b) => b.type === 'text').map((b: any) => b.text), looks: r.looks });
+      }
+      case 'pairings': {
+        const item = ctx.items[(body.n ?? 1) - 1];
+        const res = await claude(pairingsRequest(item, systemBlocks(ctx)), { owner: null, fn: 'lab.pairings' });
+        return done({ item: item.name, ...shapePairings(ctx, item, jsonFrom<any>(res)) });
+      }
+      case 'complete': {
+        const item = ctx.items[(body.n ?? 1) - 1];
+        const res = await claude(completeRequest([item], body.prompt, systemBlocks(ctx, body.weather)), { owner: null, fn: 'lab.complete' });
+        return done({ from: item.name, looks: (jsonFrom<{ looks: any[] }>(res).looks ?? []).map((l) => normaliseLook(ctx, l)) });
+      }
+      case 'pack': {
+        const destination = body.destination ?? 'Lisbon';
+        const fc = await forecast(destination);
+        const weather = fc?.days?.length ? `${fc.place}: ` + fc.days.slice(0, 4).map((d: any) => `${d.date} ${Math.round(d.min)}–${Math.round(d.max)}°C rain ${d.rain}%`).join('; ') : `${destination}, typical climate`;
+        const res = await claude(packRequest({ destination, brief: body.prompt ?? 'Long weekend, relaxed dinners.', weather }, systemBlocks(ctx, weather)), { owner: null, fn: 'lab.pack' });
+        const out = jsonFrom<any>(res);
+        return done({ weather, summary: out.summary, capsule: out.capsule, days: (out.days ?? []).map((d: any) => ({ label: d.label, look: normaliseLook(ctx, d.look) })), extras: out.extras, missing: out.missing });
+      }
+      case 'name': {
+        const res = await claude(nameRequest(ctx.items.slice(0, 3).map((i) => `${i.name} (${i.colour_name})`).join('; ')), { owner: null, fn: 'lab.name' });
+        return done(jsonFrom(res));
+      }
+    }
+    throw new HttpError(400, 'what?');
   }
 
   if (route === 'lab/sheet') {

@@ -108,7 +108,7 @@ export function productShotPrompt(args: {
     args.referenceNote,
     COMPOSITION[args.kind](args.view),
     args.state ? `Garment state: ${args.state}.` : '',
-    `Fidelity is critical: reproduce the real item exactly — same colour (corrected for neutral daylight), fabric texture, weave, wash/fading, stitching, buttons, zips, pockets, labels and every logo/graphic with identical text, colour, scale and placement. Do not add, remove, redesign or "improve" any detail. No extra logos or text.`,
+    `Fidelity is critical: reproduce the real item exactly — same colour (corrected for neutral daylight), fabric texture, weave, wash/fading, stitching, buttons, zips, pockets, labels and every logo/graphic with identical text, colour, scale and placement. Do not add, remove, redesign or "improve" any detail. No extra logos or text. The only things to leave out are retail extras that aren't part of the garment: swing/hang tags, price tags, stickers, tag fasteners, hangers and packaging (keep sewn-in neck labels).`,
     args.renderNotes ? `Item details to preserve: ${args.renderNotes}` : '',
     `Make it look freshly steamed and crease-free but keep natural fabric character. Soft, even, diffused studio lighting from the front, true colour.`,
     `BACKGROUND: a perfectly flat, uniform, solid ${k.name} (${k.hex}) chroma-key backdrop filling the entire frame edge to edge. No gradient, no vignette, no floor, no horizon, no cast shadow, no reflection, no props, no hanger, no mannequin, no person, no hands. The ${k.name} must not appear anywhere on the item itself.`,
@@ -260,7 +260,7 @@ export function renderPrompt(args: {
     args.styling ? `Styling: ${args.styling}` : '',
     `SCENE: ${args.scene}`,
     args.extra ? `Additional direction: ${args.extra}` : '',
-    `Full body in frame from head to shoes, camera at chest height, 50mm lens look, editorial menswear lookbook quality, natural skin texture, no text, no watermark.`,
+    `FRAMING: his whole figure is in frame, from the top of his head (and any hat) down to the soles of his shoes, with clear space above and below; never crop at the knees or ankles. Camera at chest height, 50mm lens look, editorial menswear lookbook quality, natural skin texture, no text, no watermark.`,
   ].filter(Boolean).join('\n');
 }
 
