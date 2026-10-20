@@ -7,6 +7,7 @@ import {
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { haptic } from '@/lib/haptics';
+import { trace } from '@/lib/diag';
 import { motion, radius, space, type as T, useTheme, type TypeVariant } from '@/theme';
 import { Icon, type IconName } from './icons';
 
@@ -26,6 +27,13 @@ export const Label = (p: TextProps & { color?: string; style?: StyleProp<TextSty
 };
 
 // ───────────── Press with scale ─────────────
+// Temporary real-device diagnostics: which presses start, end and fire (labels only, capped per session).
+let pressTraces = 0;
+function pressTrace(e: string, label: string | undefined, ev: { nativeEvent?: { pageX?: number; pageY?: number } }) {
+  if (pressTraces++ > 300) return;
+  trace(e, { label: label ?? '?', x: Math.round(ev?.nativeEvent?.pageX ?? -1), y: Math.round(ev?.nativeEvent?.pageY ?? -1) });
+}
+
 export function Press({ children, style, scaleTo = 0.97, onPress, onLongPress, hapticOn = 'tick', disabled, ...rest }:
   PressableProps & { children: ReactNode; style?: StyleProp<ViewStyle>; scaleTo?: number; hapticOn?: 'tick' | 'light' | 'medium' | null }) {
   const s = useSharedValue(1);
@@ -46,9 +54,9 @@ export function Press({ children, style, scaleTo = 0.97, onPress, onLongPress, h
       // Never hand `disabled` to the native view: on Android's new architecture a Pressable that flips from
       // disabled to enabled can stay unresponsive. Disabled is enforced here instead.
       accessibilityState={{ ...(rest.accessibilityState ?? {}), disabled: !!disabled }}
-      onPressIn={(e) => { if (!disabled) s.value = withSpring(scaleTo, motion.springSnappy); rest.onPressIn?.(e); }}
-      onPressOut={(e) => { s.value = withSpring(1, motion.springSnappy); rest.onPressOut?.(e); }}
-      onPress={(e) => { if (disabled) return; try { if (hapticOn) haptic[hapticOn](); } catch { /* never block the action */ } onPress?.(e); }}
+      onPressIn={(e) => { pressTrace('press:in', rest.accessibilityLabel, e); if (!disabled) s.value = withSpring(scaleTo, motion.springSnappy); rest.onPressIn?.(e); }}
+      onPressOut={(e) => { pressTrace('press:out', rest.accessibilityLabel, e); s.value = withSpring(1, motion.springSnappy); rest.onPressOut?.(e); }}
+      onPress={(e) => { pressTrace('press:fire', rest.accessibilityLabel, e); if (disabled) return; try { if (hapticOn) haptic[hapticOn](); } catch { /* never block the action */ } onPress?.(e); }}
       onLongPress={onLongPress ? (e) => { if (disabled) return; try { haptic.medium(); } catch { /* ignore */ } onLongPress(e); } : undefined}
     >
       <Animated.View style={[inner, a, disabled && { opacity: 0.4 }]}>{children}</Animated.View>
@@ -71,6 +79,8 @@ export function Button({ label, onPress, kind = 'primary', icon, loading, disabl
       onPress={loading || disabled ? undefined : onPress}
       onLongPress={onLongPress}
       disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
       hapticOn={kind === 'signal' ? 'medium' : 'light'}
       style={[
         {

@@ -29,6 +29,9 @@ import { ThemeProvider, useTheme } from '@/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
+let touches = 0;
+function touchTrace(x: number, y: number) { if (touches++ < 300) trace('touch:start', { x: Math.round(x), y: Math.round(y) }); }
+
 // Breadcrumb every launch and every uncaught error, so real-device problems can be diagnosed remotely.
 trace('app:start');
 try {
@@ -115,7 +118,11 @@ export default function RootLayout() {
   });
   if (!loaded) return <View style={{ flex: 1, backgroundColor: '#111111' }} />;
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView
+      style={{ flex: 1 }}
+      // Temporary real-device diagnostics: does the JS touch system see touches at all, and where?
+      onStartShouldSetResponderCapture={(e) => { touchTrace(e.nativeEvent.pageX, e.nativeEvent.pageY); return false; }}
+    >
       <SafeAreaProvider>
         <PersistQueryClientProvider
           client={queryClient}
