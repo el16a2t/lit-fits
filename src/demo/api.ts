@@ -22,6 +22,8 @@ export async function demoApi(route: string, body: any): Promise<unknown> {
       return { looks: [demoLook('Tonal workwear', ['demo-1', 'demo-3', 'demo-5']), demoLook('Check it open', ['demo-6', 'demo-4', 'demo-5'])] };
     case 'look/name':
       return { title: 'Olive, quietly', occasion: 'Weekend' };
+    case 'look/critique':
+      return { verdict: 'works', headline: 'Easy and coherent; the shoes are the weak link.', working: ['Olive and ecru are a calm, earthy pairing.'], issues: ['The trainers are sportier than everything else.'], swaps: [] };
     case 'render':
       return { id: 'r-demo', status: 'queued', items: body.items };
     default:

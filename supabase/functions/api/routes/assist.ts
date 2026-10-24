@@ -133,6 +133,39 @@ export function packRequest(p: { destination: string; start_on?: string; end_on?
   };
 }
 
+/** A short, honest read on why a specific combination works or clashes — the "why" behind the score bar. */
+export function critiqueRequest(current: WardrobeItem[], heuristic: string | undefined, system: Block[]): ClaudeRequest {
+  return {
+    model: MODELS.fast,
+    max_tokens: 3000,
+    output_config: {
+      effort: 'low',
+      format: {
+        type: 'json_schema',
+        schema: {
+          type: 'object', additionalProperties: false, required: ['verdict', 'headline', 'working', 'issues', 'swaps'],
+          properties: {
+            verdict: { type: 'string', enum: ['sits well', 'works', 'clashes'] },
+            headline: { type: 'string', description: 'One plain sentence: the overall read.' },
+            working: { type: 'array', items: { type: 'string' }, description: 'Up to 3 short points on what works (colour, proportion, texture, formality, season).' },
+            issues: { type: 'array', items: { type: 'string' }, description: 'Up to 3 short points on what holds it back. Empty if nothing does.' },
+            swaps: {
+              type: 'array',
+              description: 'Up to 2 swaps using pieces I already own that would fix the issues. Empty if the look is already right.',
+              items: { type: 'object', additionalProperties: false, required: ['out', 'in', 'why'], properties: { out: ref, in: ref, why: { type: 'string' } } },
+            },
+          },
+        },
+      },
+    },
+    system,
+    messages: [{
+      role: 'user',
+      content: `I'm looking at this combination: ${current.map((i) => `#${i.number} ${i.name}`).join(', ')}.${heuristic ? ` The app's quick rule-based check (colour wheel, formality, pattern and season rules) rated it "${heuristic}".` : ''} Tell me why it works or clashes, specifically for these pieces. Be direct and concrete, name the pieces, and keep each point to one sentence. If you disagree with the quick check, say so in the headline. Only suggest swaps for the same slot, from my own wardrobe.`,
+    }],
+  };
+}
+
 export function nameRequest(desc: string): ClaudeRequest {
   return {
     model: MODELS.light,
@@ -185,6 +218,22 @@ export async function complete(req: Request, caller: Caller) {
   const out = jsonFrom<{ looks: any[] }>(res);
   const looks = (out.looks ?? []).map((l) => normaliseLook(ctx, l)).filter(Boolean);
   return json({ looks });
+}
+
+// ───────────── why a look works / clashes ─────────────
+export async function critique(req: Request, caller: Caller) {
+  const { item_ids = [], heuristic, weather } = await req.json();
+  const owner = caller.userId;
+  const { ctx, system } = await systemFor(owner, weather);
+  const current = (item_ids as string[]).map((id) => ctx.byId.get(id)).filter(Boolean) as WardrobeItem[];
+  if (current.length < 2) throw new HttpError(400, 'Pick at least two pieces');
+  const res = await claude(critiqueRequest(current, heuristic, system), { owner, fn: 'critique' });
+  const out = jsonFrom<any>(res);
+  const swaps = (out.swaps ?? []).map((s: any) => {
+    const a = resolveRef(ctx, s.out), b = resolveRef(ctx, s.in);
+    return a && b && a.id !== b.id && current.some((c) => c.id === a.id) && !current.some((c) => c.id === b.id) ? { out_id: a.id, in_id: b.id, why: s.why } : null;
+  }).filter(Boolean);
+  return json({ verdict: out.verdict, headline: out.headline, working: out.working ?? [], issues: out.issues ?? [], swaps });
 }
 
 // ───────────── packing capsule for a trip ─────────────

@@ -7,6 +7,7 @@ import { CanvasPiece, type PieceEvents } from '@/components/canvas/CanvasPiece';
 import { Icon } from '@/components/icons';
 import { ItemPicker } from '@/components/ItemPicker';
 import { LookCard } from '@/components/LookCard';
+import { LookVerdict } from '@/components/LookVerdict';
 import { Menu, Sheet, toast } from '@/components/sheet';
 import { Button, Chip, Field, Grain, IconButton, Label, Press, Thinking, Txt } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -153,9 +154,9 @@ export default function Builder() {
 
         {/* score + weather chip */}
         {pieces.length >= 2 ? (
-          <Animated.View entering={FadeIn} style={{ position: 'absolute', top: 8, left: space.lg, flexDirection: 'row', gap: 6, alignItems: 'center' }}>
-            <View style={{ width: 40, height: 3, backgroundColor: c.line }}><View style={{ width: `${Math.round(score * 100)}%`, height: 3, backgroundColor: score > 0.72 ? c.success : score > 0.55 ? c.ink : c.signal }} /></View>
-            <Label>{score > 0.72 ? 'Sits well' : score > 0.55 ? 'Works' : 'Clashing a bit'}</Label>
+          <Animated.View entering={FadeIn} style={{ position: 'absolute', top: 8, left: space.lg, zIndex: 40 }}>
+            <LookVerdict items={items} score={score} clashLabel="Clashing a bit" barWidth={40}
+              onSwap={(outId, inId) => { draft.replace(outId, inId); setSelected(inId); toast('Swapped in'); }} />
           </Animated.View>
         ) : null}
 

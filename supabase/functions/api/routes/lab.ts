@@ -9,7 +9,7 @@ import { generateImage, imagePart, type Part } from '../lib/gemini.ts';
 import { claude, jsonFrom } from '../lib/anthropic.ts';
 import { buildCtx, type WardrobeItem } from '../lib/context.ts';
 import { ADAM_DEFAULT_SEED } from '../lib/prompts.ts';
-import { completeRequest, forecast, nameRequest, packRequest, pairingsRequest, shapePairings, systemBlocks } from './assist.ts';
+import { completeRequest, critiqueRequest, forecast, nameRequest, packRequest, pairingsRequest, shapePairings, systemBlocks } from './assist.ts';
 import { normaliseLook, runStylist, stylistTurn } from './stylist.ts';
 
 /** Wardrobe context built from staged seed pieces, so every AI path can be exercised before an owner exists. */
@@ -248,6 +248,12 @@ export async function lab(req: Request, caller: Caller, route: string) {
         const res = await claude(packRequest({ destination, brief: body.prompt ?? 'Long weekend, relaxed dinners.', weather }, systemBlocks(ctx, weather)), { owner: null, fn: 'lab.pack' });
         const out = jsonFrom<any>(res);
         return done({ weather, summary: out.summary, capsule: out.capsule, days: (out.days ?? []).map((d: any) => ({ label: d.label, look: normaliseLook(ctx, d.look) })), extras: out.extras, missing: out.missing });
+      }
+      case 'critique': {
+        // body.ns: 1-based staged piece numbers, e.g. [2, 6, 7]
+        const pick = ((body.ns as number[]) ?? [1, 2, 3]).map((n) => ctx.items[n - 1]).filter(Boolean);
+        const res = await claude(critiqueRequest(pick, body.heuristic, systemBlocks(ctx, body.weather)), { owner: null, fn: 'lab.critique' });
+        return done({ pieces: pick.map((i) => i.name), ...jsonFrom<any>(res) });
       }
       case 'name': {
         const res = await claude(nameRequest(ctx.items.slice(0, 3).map((i) => `${i.name} (${i.colour_name})`).join('; ')), { owner: null, fn: 'lab.name' });

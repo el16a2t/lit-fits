@@ -14,32 +14,41 @@ function hueDist(a: number, b: number) {
   return d > 180 ? 360 - d : d;
 }
 
-/** 0..1 — how well two pieces sit together. */
-export function pairScore(a: Item, b: Item): number {
-  let s = 0.6;
+export type FactorKind = 'formality' | 'warmth' | 'colour' | 'tonal' | 'pattern' | 'statement' | 'season';
+export interface Factor { kind: FactorKind; delta: number }
+
+const isPatterned = (i: Item) => !!i.pattern && i.pattern !== 'Solid' && i.pattern !== 'Marl / heather' && i.pattern !== 'Textured';
+
+/** The individual rules behind pairScore — exposed so the UI can explain a score. */
+export function pairFactors(a: Item, b: Item): Factor[] {
+  const f: Factor[] = [];
   // formality coherence
   const fd = Math.abs((a.formality ?? 2) - (b.formality ?? 2));
-  s += fd === 0 ? 0.15 : fd === 1 ? 0.1 : fd === 2 ? -0.1 : -0.3;
+  f.push({ kind: 'formality', delta: fd === 0 ? 0.15 : fd === 1 ? 0.1 : fd === 2 ? -0.1 : -0.3 });
   // warmth coherence (shorts + parka = no)
   const wd = Math.abs((a.warmth ?? 3) - (b.warmth ?? 3));
-  if (wd >= 3) s -= 0.2;
+  if (wd >= 3) f.push({ kind: 'warmth', delta: -0.2 });
   // colour
   const an = isNeutral(a), bn = isNeutral(b);
-  if (an && bn) s += 0.1;
-  else if (an || bn) s += 0.08;
+  if (an && bn) f.push({ kind: 'colour', delta: 0.1 });
+  else if (an || bn) f.push({ kind: 'colour', delta: 0.08 });
   else if (a.hue != null && b.hue != null) {
     const d = hueDist(a.hue, b.hue);
-    s += d < 25 ? 0.05 : d > 150 ? -0.05 : -0.15;
+    f.push({ kind: 'colour', delta: d < 25 ? 0.05 : d > 150 ? -0.05 : -0.15 });
   }
-  if (a.colour_family && a.colour_family === b.colour_family && an) s += 0.05; // tonal
+  if (a.colour_family && a.colour_family === b.colour_family && an) f.push({ kind: 'tonal', delta: 0.05 });
   // pattern clash
-  const ap = a.pattern && a.pattern !== 'Solid' && a.pattern !== 'Marl / heather' && a.pattern !== 'Textured';
-  const bp = b.pattern && b.pattern !== 'Solid' && b.pattern !== 'Marl / heather' && b.pattern !== 'Textured';
-  if (ap && bp) s -= 0.25;
+  if (isPatterned(a) && isPatterned(b)) f.push({ kind: 'pattern', delta: -0.25 });
   // statements
-  if (isStatement(a) && isStatement(b)) s -= 0.2;
+  if (isStatement(a) && isStatement(b)) f.push({ kind: 'statement', delta: -0.2 });
   // season overlap
-  if (a.seasons?.length && b.seasons?.length && !a.seasons.some((x) => b.seasons.includes(x))) s -= 0.1;
+  if (a.seasons?.length && b.seasons?.length && !a.seasons.some((x) => b.seasons.includes(x))) f.push({ kind: 'season', delta: -0.1 });
+  return f;
+}
+
+/** 0..1 — how well two pieces sit together. */
+export function pairScore(a: Item, b: Item): number {
+  const s = pairFactors(a, b).reduce((t, x) => t + x.delta, 0.6);
   return Math.max(0, Math.min(1, s));
 }
 
@@ -50,6 +59,115 @@ export function lookScore(pieces: Item[]): number {
   const statements = pieces.filter(isStatement).length;
   return t / n - (statements > 1 ? 0.15 * (statements - 1) : 0);
 }
+
+export type Verdict = 'sits' | 'works' | 'clash';
+export const verdictOf = (score: number): Verdict => (score > 0.72 ? 'sits' : score > 0.55 ? 'works' : 'clash');
+
+export interface Reason { tone: 'good' | 'warn' | 'bad'; title: string; detail: string; weight: number }
+
+const FORMALITY_WORDS = ['', 'loungewear', 'casual', 'smart-casual', 'smart', 'formal'];
+const WARMTH_WORDS = ['', 'hot-weather', 'light', 'mid-weight', 'warm', 'cold-weather'];
+const lower = (i: Item) => {
+  const t = i.name || SUBTYPE_MAP[i.subtype ?? '']?.label || 'piece';
+  // keep brand names capitalised ("the Burberry flannel"), lower-case generic ones ("the chambray shirt")
+  if (i.brand && t.toLowerCase().startsWith(i.brand.toLowerCase())) return t;
+  return t.charAt(0).toLowerCase() + t.slice(1);
+};
+/** "is"/"are" for a set of pieces: shoes, trousers and Baggies are plural on their own. */
+const isAre = (items: Item[]) => {
+  if (items.length > 1) return 'are';
+  const last = lower(items[0]).split(' ').pop() ?? '';
+  return /[^s]s$/i.test(last) ? 'are' : 'is';
+};
+const anA = (w: string) => (/^[aeiou]/i.test(w) ? 'an' : 'a');
+const list = (xs: string[]) => (xs.length <= 1 ? xs[0] ?? '' : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+const the = (items: Item[]) => list(items.map((i) => `the ${lower(i)}`));
+
+/**
+ * Plain-English reasons behind lookScore, strongest first. Built from the same rules as the score,
+ * so the explanation never disagrees with the bar.
+ */
+export function explainLook(pieces: Item[]): Reason[] {
+  if (pieces.length < 2) return [];
+  const pairs: { a: Item; b: Item; f: Factor[] }[] = [];
+  for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) pairs.push({ a: pieces[i], b: pieces[j], f: pairFactors(pieces[i], pieces[j]) });
+  const n = pairs.length;
+  const withKind = (k: FactorKind, pred: (d: number) => boolean = () => true) => pairs.filter((p) => p.f.some((x) => x.kind === k && pred(x.delta)));
+  const total = (k: FactorKind) => pairs.reduce((t, p) => t + p.f.filter((x) => x.kind === k).reduce((a, x) => a + x.delta, 0), 0) / n;
+  const out: Reason[] = [];
+
+  // formality
+  const forms = pieces.map((p) => p.formality ?? 2);
+  const fMin = Math.min(...forms), fMax = Math.max(...forms);
+  if (fMax - fMin <= 1) {
+    out.push({ tone: 'good', title: 'Same dress code', detail: fMax === fMin ? `Everything is ${FORMALITY_WORDS[fMax] ?? 'on the same level'}, so nothing looks out of place.` : `Everything sits between ${FORMALITY_WORDS[fMin]} and ${FORMALITY_WORDS[fMax]}, which reads as one intention.`, weight: Math.abs(total('formality')) });
+  } else {
+    const hi = pieces.filter((p) => (p.formality ?? 2) === fMax), lo = pieces.filter((p) => (p.formality ?? 2) === fMin);
+    out.push({
+      tone: fMax - fMin >= 3 ? 'bad' : 'warn', title: 'Mixed dress codes',
+      detail: `${cap(the(hi))} ${isAre(hi)} ${FORMALITY_WORDS[fMax]}, while ${the(lo)} ${isAre(lo)} ${FORMALITY_WORDS[fMin]}. ${fMax - fMin >= 3 ? 'That gap usually looks accidental.' : 'A deliberate high-low mix can work, but it needs to look intentional.'}`,
+      weight: Math.abs(total('formality')) + 0.1,
+    });
+  }
+
+  // warmth
+  const cold = withKind('warmth');
+  if (cold.length) {
+    const ws = pieces.map((p) => p.warmth ?? 3);
+    const warm = pieces.filter((p) => (p.warmth ?? 3) === Math.max(...ws)), light = pieces.filter((p) => (p.warmth ?? 3) === Math.min(...ws));
+    out.push({ tone: 'bad', title: 'Different weather', detail: `${cap(the(warm))} ${isAre(warm)} ${WARMTH_WORDS[Math.max(...ws)]} kit, but ${the(light)} ${isAre(light)} ${WARMTH_WORDS[Math.min(...ws)]}. One of them is dressed for a different day.`, weight: Math.abs(total('warmth')) + 0.15 });
+  }
+
+  // colour
+  const coloured = pieces.filter((p) => !isNeutral(p));
+  const neutrals = pieces.filter(isNeutral);
+  const harsh = withKind('colour', (d) => d <= -0.15);
+  const contrast = withKind('colour', (d) => d === -0.05);
+  if (harsh.length) {
+    const p = harsh[0];
+    out.push({ tone: 'bad', title: 'Colours compete', detail: `The ${colourOf(p.a)} of the ${lower(p.a)} and the ${colourOf(p.b)} of the ${lower(p.b)} sit awkwardly apart on the colour wheel: neither matching nor a clean contrast.${neutrals.length ? '' : ' A neutral between them would calm it down.'}`, weight: Math.abs(total('colour')) + 0.1 });
+  } else if (coloured.length === 0) {
+    out.push({ tone: 'good', title: 'All neutrals', detail: `${cap(list(unique(pieces.map(colourOf))))}: a palette that can't really go wrong. Texture and fit do the talking.`, weight: Math.abs(total('colour')) });
+  } else if (coloured.length === 1) {
+    out.push({ tone: 'good', title: 'One colour, grounded', detail: `The ${colourOf(coloured[0])} ${lower(coloured[0])} is the only colour, and the neutrals around it let it stand out.`, weight: Math.abs(total('colour')) + 0.02 });
+  } else if (contrast.length) {
+    out.push({ tone: 'warn', title: 'Strong contrast', detail: `${cap(list(unique(coloured.map(colourOf))))} are near-opposites. That's bold rather than wrong; keep everything else quiet.`, weight: Math.abs(total('colour')) });
+  } else {
+    out.push({ tone: 'good', title: 'Related colours', detail: `${cap(list(unique(coloured.map(colourOf))))} are close on the colour wheel, so they flow into each other.`, weight: Math.abs(total('colour')) });
+  }
+  if (withKind('tonal').length && coloured.length === 0) {
+    const fam = pieces.find((p) => withKind('tonal').some((x) => x.a === p))?.colour_family;
+    if (fam) out.push({ tone: 'good', title: 'Tonal', detail: `Repeating ${fam} across pieces gives it a considered, put-together feel.`, weight: 0.05 });
+  }
+
+  // pattern
+  const patterned = pieces.filter(isPatterned);
+  if (patterned.length >= 2) {
+    out.push({ tone: 'bad', title: 'Patterns fighting', detail: `${cap(list(patterned.map((p) => `the ${(p.pattern ?? '').toLowerCase()} ${lower(p)}`)))} pull the eye in different directions. Keep one pattern and make the rest plain.`, weight: Math.abs(total('pattern')) + 0.15 });
+  } else if (patterned.length === 1) {
+    out.push({ tone: 'good', title: 'One pattern', detail: `The ${(patterned[0].pattern ?? '').toLowerCase()} on the ${lower(patterned[0])} is the only pattern, so it has room to work.`, weight: 0.03 });
+  }
+
+  // statements
+  const statements = pieces.filter(isStatement);
+  if (statements.length > 1) {
+    out.push({ tone: 'bad', title: 'Too many statements', detail: `${cap(the(statements))} ${statements.length === 2 ? 'both' : 'all'} want to be the focal point. Pick one hero and tone the rest down.`, weight: 0.15 * (statements.length - 1) + Math.abs(total('statement')) });
+  }
+
+  // season
+  const off = withKind('season');
+  if (off.length) {
+    const p = off[0];
+    out.push({ tone: 'warn', title: 'Different seasons', detail: `The ${lower(p.a)} ${isAre([p.a])} ${anA(p.a.seasons[0])} ${p.a.seasons.join('/')} piece and the ${lower(p.b)} ${isAre([p.b])} ${p.b.seasons.join('/')}. They rarely meet in the same week.`, weight: Math.abs(total('season')) });
+  }
+
+  return out.sort((x, y) => toneRank(x.tone) - toneRank(y.tone) || y.weight - x.weight);
+}
+
+const toneRank = (t: Reason['tone']) => (t === 'bad' ? 0 : t === 'warn' ? 1 : 2);
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const unique = (xs: string[]) => [...new Set(xs.filter(Boolean))];
+const colourOf = (i: Item) => (i.colour_name || i.colour_family || 'colour').toLowerCase();
 
 export function targetWarmth(tempC?: number | null): number | null {
   if (tempC == null) return null;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LookVerdict } from '@/components/LookVerdict';
 import { Rail, type RailHandle } from '@/components/mixer/Rail';
 import { Menu, toast } from '@/components/sheet';
 import { Button, Chip, Grain, IconButton, Label, Txt } from '@/components/ui';
@@ -137,6 +138,20 @@ export default function Mixer() {
     return () => sub.remove();
   }, [shuffle]);
 
+  // apply a stylist-suggested swap: spin that row to the suggested piece (adding the row if it's hidden)
+  const swapIn = (_outId: string, inId: string) => {
+    const it = all.find((i) => i.id === inId);
+    const s = it?.slot as Slot | undefined;
+    if (!it || !s || !ROW_SLOTS.includes(s)) return;
+    if (!visible.includes(s)) setVisible((v) => ROW_SLOTS.filter((x) => v.includes(x) || x === s));
+    setCentre((p) => ({ ...p, [s]: it }));
+    setTimeout(() => {
+      const k = (ordered[s] ?? []).findIndex((x) => x.id === inId);
+      if (k >= 0) rails.current[s]?.spinTo(k, { turns: 0, duration: 520 });
+    }, 260);
+    toast(`Swapped in ${itemTitle(it)}`);
+  };
+
   const cycleMode = (it: Item) => {
     const ready = (it.wear_modes ?? []).filter((m) => m.status === 'base' || m.status === 'ready');
     if (ready.length < 2) { haptic.tick(); return; }
@@ -174,10 +189,11 @@ export default function Mixer() {
         <IconButton name="close" onPress={() => router.back()} />
         <View style={{ flex: 1 }}>
           <Txt v="displaySm" style={{ fontSize: 24, lineHeight: 26 }}>Mixer</Txt>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <View style={{ width: 34, height: 3, backgroundColor: c.line }}><View style={{ width: `${Math.round(score * 100)}%`, height: 3, backgroundColor: score > 0.72 ? c.success : score > 0.55 ? c.ink : c.signal }} /></View>
-            <Label style={{ fontSize: 9 }}>{current.length < 2 ? 'Swipe each row' : score > 0.72 ? 'Sits well' : score > 0.55 ? 'Works' : 'Clashing'}</Label>
-          </View>
+          {current.length < 2 ? (
+            <Label style={{ fontSize: 9 }}>Swipe each row</Label>
+          ) : (
+            <View style={{ alignSelf: 'flex-start' }}><LookVerdict items={current} score={score} small onSwap={swapIn} /></View>
+          )}
         </View>
         <Chip small label="Smart" active={mixerSmart} onPress={() => setPrefs({ mixerSmart: !mixerSmart })} />
         <IconButton name="shuffle" bg={c.ink} color={c.bg} onPress={shuffle} accessibilityLabel="Shuffle" />

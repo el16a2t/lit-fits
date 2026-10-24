@@ -142,6 +142,14 @@ export interface MissingPiece {
   why: string;
 }
 
+export interface LookCritique {
+  verdict: 'sits well' | 'works' | 'clashes';
+  headline: string;
+  working: string[];
+  issues: string[];
+  swaps: { out_id: string; in_id: string; why: string }[];
+}
+
 export interface StylistLook {
   title: string;
   occasion?: string;
