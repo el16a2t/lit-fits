@@ -161,7 +161,7 @@ export function critiqueRequest(current: WardrobeItem[], heuristic: string | und
     system,
     messages: [{
       role: 'user',
-      content: `I'm looking at this combination: ${current.map((i) => `#${i.number} ${i.name}`).join(', ')}.${heuristic ? ` The app's quick rule-based check (colour wheel, formality, pattern and season rules) rated it "${heuristic}".` : ''} Tell me why it works or clashes, specifically for these pieces. Be direct and concrete, name the pieces, and keep each point to one sentence. If you disagree with the quick check, say so in the headline. Only suggest swaps for the same slot, from my own wardrobe.`,
+      content: `I'm looking at this combination: ${current.map((i) => `#${i.number} ${i.name}`).join(', ')}.${heuristic ? ` The app's quick rule-based check (colour wheel, formality, pattern and season rules) rated it "${heuristic}".` : ''} Tell me why it works or clashes, specifically for these pieces. Be direct and concrete. In the text, refer to pieces by a short plain name ("the flannel", "the Baggies"), never by #number, and never mention internal scales like formality or warmth numbers. Keep each point to one short sentence (under 25 words). If you disagree with the quick check, say so in the headline. Only suggest swaps for the same slot, from my own wardrobe.`,
     }],
   };
 }
