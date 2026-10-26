@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/icons';
 import { ItemImage } from '@/components/ItemImage';
 import { Label } from '@/components/ui';
+import { traceNow } from '@/lib/diag';
 import { haptic } from '@/lib/haptics';
 import { useItems, useProfile } from '@/lib/queries';
 import { DEMO } from '@/lib/supabase';
@@ -16,7 +17,7 @@ function TabButton({ isFocused, label, ref, ...props }: TabTriggerSlotProps & { 
   const { c } = useTheme();
   const dot = useAnimatedStyle(() => ({ transform: [{ scale: withSpring(isFocused ? 1 : 0, motion.springSnappy) }] }));
   return (
-    <Pressable ref={ref as any} {...props} onPress={(e) => { haptic.tick(); props.onPress?.(e); }} style={{ flex: 1, height: 54, alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+    <Pressable ref={ref as any} {...props} onPress={(e) => { traceNow('tab', { label }); haptic.tick(); props.onPress?.(e); }} style={{ flex: 1, height: 54, alignItems: 'center', justifyContent: 'center', gap: 5 }}>
       <Animated.View style={[{ width: 5, height: 5, backgroundColor: c.signal }, dot]} />
       <Label color={isFocused ? c.ink : c.muted} style={{ fontSize: 10.5, letterSpacing: 1.2 }}>{label}</Label>
     </Pressable>

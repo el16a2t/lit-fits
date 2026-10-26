@@ -64,6 +64,13 @@ function send(dev: unknown, events: Crumb[], signal?: AbortSignal) {
   });
 }
 
+/** Record a breadcrumb and write the on-disk tail straight away (for steps that may crash the app natively). */
+export function traceNow(e: string, d?: unknown) {
+  trace(e, d);
+  if (tailTimer) { clearTimeout(tailTimer); tailTimer = null; }
+  persistTail();
+}
+
 /** Upload immediately (used just before a fatal error hands over to the default crash handler). */
 export async function flushNow(maxMs = 1500) {
   if (timer) { clearTimeout(timer); timer = null; }
