@@ -24,7 +24,7 @@ import { ToastHost } from '@/components/sheet';
 import { queryClient, useRealtimeSync } from '@/lib/queries';
 import { DEMO, supabase } from '@/lib/supabase';
 import { useCaptureWorker } from '@/state/capture';
-import { errorInfo, trace } from '@/lib/diag';
+import { errorInfo, flushNow, recoverPreviousRun, trace } from '@/lib/diag';
 import { ThemeProvider, useTheme } from '@/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -34,10 +34,16 @@ function touchTrace(x: number, y: number) { if (touches++ < 300) trace('touch:st
 
 // Breadcrumb every launch and every uncaught error, so real-device problems can be diagnosed remotely.
 trace('app:start');
+recoverPreviousRun();
 try {
   const g = globalThis as any;
   const prev = g.ErrorUtils?.getGlobalHandler?.();
-  g.ErrorUtils?.setGlobalHandler?.((e: unknown, fatal?: boolean) => { trace('app:uncaught', { fatal: !!fatal, ...errorInfo(e) }); prev?.(e, fatal); });
+  g.ErrorUtils?.setGlobalHandler?.((e: unknown, fatal?: boolean) => {
+    trace('app:uncaught', { fatal: !!fatal, ...errorInfo(e), stack: String((e as Error)?.stack ?? '').slice(0, 1200) });
+    // a fatal error kills the app as soon as the default handler runs, so get the crumbs out first
+    if (fatal) flushNow().finally(() => prev?.(e, fatal));
+    else prev?.(e, fatal);
+  });
   g.HermesInternal?.enablePromiseRejectionTracker?.({ allRejections: true, onUnhandled: (_id: number, e: unknown) => trace('app:unhandled-rejection', errorInfo(e)) });
 } catch { /* ignore */ }
 
