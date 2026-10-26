@@ -1,6 +1,5 @@
 // Today's weather via Open-Meteo (no key) + coarse location. Cached for an hour.
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Location from 'expo-location';
 import { useQuery } from '@tanstack/react-query';
 import { usePrefs } from '@/state/prefs';
 import { trace } from './diag';
@@ -23,41 +22,23 @@ const CODES: Record<number, string> = {
 
 const LONDON = { latitude: 51.5072, longitude: -0.1276 };
 
-const withTimeout = <T,>(p: Promise<T>, ms: number): Promise<T | null> =>
-  Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]).catch(() => null);
-
 /**
- * Town name over HTTP. Deliberately NOT expo-location's reverseGeocodeAsync: on Android 13+ its geocoder callback
- * runs on a background thread and throws a NullPointerException when an address has no country code, which kills
- * the app before JS can catch anything (the Explore-tab crash).
+ * Approximate location from the network (IP), over HTTP. Deliberately no expo-location: on the owner's Pixel its
+ * native module crashes the whole app the moment it's called (permission check / position), which is what killed
+ * Explore on open — the only tab that fetches the weather cold. City-level accuracy is plenty for a forecast.
  */
-async function placeName(latitude: number, longitude: number): Promise<string | null> {
+async function coords(): Promise<{ latitude: number; longitude: number; place: string | null }> {
   try {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), 5000);
-    const r = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`, { signal: ac.signal });
+    const r = await fetch('https://api.bigdatacloud.net/data/reverse-geocode-client?localityLanguage=en', { signal: ac.signal });
     clearTimeout(t);
     const d = await r.json();
-    return d?.city || d?.locality || d?.principalSubdivision || null;
-  } catch {
-    return null;
-  }
-}
-
-async function coords() {
-  try {
-    const { status } = await Location.getForegroundPermissionsAsync();
-    let ok = status === 'granted';
-    if (!ok) ok = (await Location.requestForegroundPermissionsAsync()).status === 'granted';
-    if (!ok) return { ...LONDON, place: 'London' };
-    const last = (await withTimeout(Location.getLastKnownPositionAsync({ maxAge: 1000 * 60 * 60 * 6 }), 3000))
-      ?? (await withTimeout(Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Lowest }), 6000));
-    if (!last) return { ...LONDON, place: 'London' };
-    const { latitude, longitude } = last.coords;
-    return { latitude, longitude, place: await placeName(latitude, longitude) };
-  } catch {
-    return { ...LONDON, place: 'London' };
-  }
+    if (typeof d?.latitude === 'number' && typeof d?.longitude === 'number') {
+      return { latitude: d.latitude, longitude: d.longitude, place: d.city || d.locality || d.principalSubdivision || null };
+    }
+  } catch { /* fall through */ }
+  return { ...LONDON, place: 'London' };
 }
 
 export async function fetchWeather(): Promise<Weather> {
@@ -68,8 +49,8 @@ export async function fetchWeather(): Promise<Weather> {
   }
   const { latitude, longitude, place } = await coords();
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=1&timezone=auto`;
-  trace('weather:fetch');
   const d = await (await fetch(url)).json();
+  trace('weather:fetch', { place, ok: !!d?.current });
   const w: Weather = {
     temp: Math.round(d.current?.temperature_2m ?? 12),
     min: Math.round(d.daily?.temperature_2m_min?.[0] ?? 8),
