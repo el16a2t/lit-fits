@@ -7,8 +7,9 @@ import { viewsFor, type View, renderPrompt, SCENES } from '../lib/prompts.ts';
 import { SUBTYPE_MAP } from '../lib/taxonomy.ts';
 import { generateImage, imagePart, type Part } from '../lib/gemini.ts';
 import { claude, jsonFrom } from '../lib/anthropic.ts';
-import { buildCtx, type WardrobeItem } from '../lib/context.ts';
+import { buildCtx, loadContext, resolveRef, type WardrobeItem } from '../lib/context.ts';
 import { ADAM_DEFAULT_SEED } from '../lib/prompts.ts';
+import { assess, tripDays } from '../lib/tripRules.ts';
 import { completeRequest, critiqueRequest, forecast, nameRequest, packRequest, pairingsRequest, shapePairings, systemBlocks } from './assist.ts';
 import { normaliseLook, runStylist, stylistTurn } from './stylist.ts';
 
@@ -242,12 +243,18 @@ export async function lab(req: Request, caller: Caller, route: string) {
         return done({ from: item.name, looks: (jsonFrom<{ looks: any[] }>(res).looks ?? []).map((l) => normaliseLook(ctx, l)) });
       }
       case 'pack': {
+        // body: {destination, start_on?, end_on?, settings?, prompt?, real?: true → plan against the owner's real wardrobe (nothing is saved)}
         const destination = body.destination ?? 'Lisbon';
-        const fc = await forecast(destination);
-        const weather = fc?.days?.length ? `${fc.place}: ` + fc.days.slice(0, 4).map((d: any) => `${d.date} ${Math.round(d.min)}–${Math.round(d.max)}°C rain ${d.rain}%`).join('; ') : `${destination}, typical climate`;
-        const res = await claude(packRequest({ destination, brief: body.prompt ?? 'Long weekend, relaxed dinners.', weather }, systemBlocks(ctx, weather)), { owner: null, fn: 'lab.pack' });
+        const use = body.real ? await loadContext((await admin.from('profiles').select('id').limit(1).single()).data!.id) : ctx;
+        const fc = await forecast(destination, body.start_on, body.end_on);
+        const weather = fc?.days?.length ? `${fc.place}: ` + fc.days.map((d: any) => `${d.date} ${Math.round(d.min)}–${Math.round(d.max)}°C rain ${d.rain}%`).join('; ') : `${destination}, typical climate`;
+        const settings = { luggage: body.settings?.luggage ?? 'carry-on', laundry: body.settings?.laundry ?? 'weekly', activities: body.settings?.activities ?? [] };
+        const today = new Date().toISOString().slice(0, 10);
+        const res = await claude(packRequest({ destination, start_on: body.start_on, end_on: body.end_on, brief: body.prompt, weather, settings, today, excluded: [], pinned: [] }, systemBlocks(use, weather)), { owner: null, fn: 'lab.pack' });
         const out = jsonFrom<any>(res);
-        return done({ weather, summary: out.summary, capsule: out.capsule, days: (out.days ?? []).map((d: any) => ({ label: d.label, look: normaliseLook(ctx, d.look) })), extras: out.extras, missing: out.missing });
+        const capsule = (out.capsule ?? []).map((c: any) => { const it = resolveRef(use, c.id); return it ? { n: it.number, name: it.name, slot: it.slot, role: c.role, travel: c.travel, why: c.why } : { bad: c.id }; });
+        const check = assess(capsule.filter((c: any) => !c.bad), settings, tripDays(body.start_on, body.end_on));
+        return done({ weather, summary: out.summary, check, capsule, looks: (out.looks ?? []).map((d: any) => ({ date: d.date, label: d.label, items: normaliseLook(use, d.look)?.items.map((i: any) => i.number) })), extras: out.extras, missing: out.missing });
       }
       case 'critique': {
         // body.ns: 1-based staged piece numbers, e.g. [2, 6, 7]

@@ -39,6 +39,8 @@ export interface Ctx {
   body: string;
   trend: string | null;
   laundryTracking: boolean;
+  /** Rebuild this context over a subset of the wardrobe (e.g. only what's packed for a trip). */
+  scope: (ids: string[]) => Ctx;
 }
 
 export async function loadContext(owner: string, opts: { includeDescriptions?: boolean } = {}): Promise<Ctx> {
@@ -107,6 +109,10 @@ export function buildCtx(input: {
   }
 
   return {
+    scope: (ids: string[]) => {
+      const keep = new Set(ids);
+      return buildCtx({ ...input, items: input.items.filter((i) => keep.has(i.id)) });
+    },
     items: list,
     byNumber: new Map(list.map((i) => [i.number, i])),
     byId: new Map(list.map((i) => [i.id, i])),

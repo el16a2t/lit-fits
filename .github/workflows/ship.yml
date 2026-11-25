@@ -41,6 +41,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Typecheck
         run: npx tsc --noEmit
+      - name: Shared packing rules in sync (app ↔ edge function)
+        run: cmp src/lib/tripRules.ts supabase/functions/api/lib/tripRules.ts
       - name: Link EAS project (first run only)
         run: |
           # only touch app.json when the link is genuinely missing, so the native fingerprint stays stable

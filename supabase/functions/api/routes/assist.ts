@@ -5,6 +5,7 @@ import { loadContext, resolveRef, todayString, type Ctx, type WardrobeItem } fro
 import { stylistSystem } from '../lib/prompts.ts';
 import { normaliseLook } from './stylist.ts';
 import { SUBTYPE_MAP } from '../lib/taxonomy.ts';
+import { ACTIVITIES, budget, dayOfTrip, DEFAULT_SETTINGS, LAUNDRY, LUGGAGE, tripDays, type Budget, type TripSettings } from '../lib/tripRules.ts';
 
 const ref = { type: 'string', description: 'Wardrobe item as #number' };
 const missingSchema = {
@@ -98,7 +99,52 @@ export function completeRequest(current: WardrobeItem[], prompt: string | undefi
   };
 }
 
-export function packRequest(p: { destination: string; start_on?: string; end_on?: string; brief?: string; weather: string }, system: Block[]): ClaudeRequest {
+export interface PackInput {
+  destination: string;
+  start_on?: string;
+  end_on?: string;
+  brief?: string;
+  weather: string;
+  settings: TripSettings;
+  today: string;
+  excluded: string[]; // "#n name" of pieces he took out
+  pinned: string[]; // "#n name" of pieces he insists on
+}
+
+const tripLooksSchema = (b: Budget) => ({
+  type: 'array',
+  description: b.mode === 'daily'
+    ? `Exactly one look per trip day (${b.looks}), in date order, each with its date.`
+    : `A rotation of ${b.looks} looks that together cover the trip's occasions and weather, re-wearing bottoms, shoes and outer layers.`,
+  items: {
+    type: 'object', additionalProperties: false, required: ['label', 'look'],
+    properties: {
+      date: { type: 'string', description: b.mode === 'daily' ? 'YYYY-MM-DD' : 'Leave empty for rotation looks' },
+      label: { type: 'string', description: 'Short: the occasion or weather it is for, e.g. "Client day" or "Hot sightseeing". No weekday names in rotation mode.' },
+      look: lookSchema,
+    },
+  },
+});
+
+/** Plans a trip capsule under explicit, numeric packing rules. */
+export function packRequest(p: PackInput, system: Block[]): ClaudeRequest {
+  const days = tripDays(p.start_on, p.end_on);
+  const b = budget(p.settings, days);
+  const already = p.start_on && p.today > p.start_on ? dayOfTrip(p.start_on, p.end_on, p.today) : null;
+  const acts = p.settings.activities.map((k) => ACTIVITIES.find((a) => a.key === k)?.label ?? k);
+  const kitActs = p.settings.activities.filter((k) => ACTIVITIES.find((a) => a.key === k)?.kit).map((k) => ACTIVITIES.find((a) => a.key === k)!.label);
+  const rules = [
+    `Luggage: ${LUGGAGE.find((l) => l.key === p.settings.luggage)?.label}. Laundry: ${LAUNDRY.find((l) => l.key === p.settings.laundry)?.label} (so the bag covers about ${b.cycle} days of wear before a wash).`,
+    `HARD LIMITS for role "core": at most ${b.pieces} clothes (tops, mid-layers, bottoms, outer; watches, bags and caps don't count), at most ${b.shoes} pairs of shoes in total INCLUDING any for the gym or beach and the pair worn travelling, at most ${b.outer} outer layers. Fewer is better if every occasion is still covered.`,
+    kitActs.length ? `Functional kit for ${kitActs.join(' and ')}: list it in the capsule with role "kit" (e.g. gym shorts, swim shorts). Kit is never styled into looks. Reuse a core trainer for the gym rather than packing another pair where possible.` : 'No functional kit is needed: every capsule piece has role "core".',
+    `Mark travel: true on the pieces to wear on the journey (the bulkiest: outer layer, heaviest trousers and shoes).`,
+    b.mode === 'daily'
+      ? `Looks: one per day (${b.looks}), dated, in order, matched to that day's forecast and plans.`
+      : `Looks: this is a ${days}-day trip, so plan a rotation of ${b.looks} looks (not one per day) that covers every occasion and the range of weather, built from capsule core pieces only.`,
+    already ? `He is ALREADY on this trip (today is day ${already} of ${days}). He has the bag with him: plan the rotation for the rest of the stay.` : null,
+    p.excluded.length ? `He has taken these OUT: never include them: ${p.excluded.join(', ')}.` : null,
+    p.pinned.length ? `He has insisted on these: always include them, and build around them: ${p.pinned.join(', ')}.` : null,
+  ].filter(Boolean).join('\n');
   return {
     model: MODELS.stylist,
     max_tokens: 14000,
@@ -108,18 +154,18 @@ export function packRequest(p: { destination: string; start_on?: string; end_on?
       format: {
         type: 'json_schema',
         schema: {
-          type: 'object', additionalProperties: false, required: ['summary', 'capsule', 'days', 'extras', 'missing'],
+          type: 'object', additionalProperties: false, required: ['summary', 'capsule', 'looks', 'extras', 'missing'],
           properties: {
-            summary: { type: 'string' },
-            capsule: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['id', 'why'], properties: { id: ref, why: { type: 'string' } } } },
-            days: {
+            summary: { type: 'string', description: '2–3 sentences: the palette, the logic of the bag, and the weather. Plain, no item numbers.' },
+            capsule: {
               type: 'array',
               items: {
-                type: 'object', additionalProperties: false, required: ['label', 'look'],
-                properties: { date: { type: 'string' }, label: { type: 'string' }, look: lookSchema },
+                type: 'object', additionalProperties: false, required: ['id', 'why', 'role', 'travel'],
+                properties: { id: ref, why: { type: 'string', description: 'One short line: what this piece does for the trip' }, role: { type: 'string', enum: ['core', 'kit'] }, travel: { type: 'boolean' } },
               },
             },
-            extras: { type: 'array', items: { type: 'string' }, description: 'Non-wardrobe things to remember (e.g. swimwear, umbrella)' },
+            looks: tripLooksSchema(b),
+            extras: { type: 'array', items: { type: 'string' }, description: 'Non-wardrobe things to pack (toiletries are assumed; list trip-specific ones: adapter, umbrella, swimwear if not owned, laptop). Short labels, no explanations.' },
             missing: missingSchema,
           },
         },
@@ -128,7 +174,27 @@ export function packRequest(p: { destination: string; start_on?: string; end_on?
     system,
     messages: [{
       role: 'user',
-      content: `Pack me a tight capsule for a trip to ${p.destination}${p.start_on ? ` from ${p.start_on}` : ''}${p.end_on ? ` to ${p.end_on}` : ''}. ${p.brief ?? ''}\nWeather: ${p.weather}\nMaximise outfit combinations from the fewest pieces (re-wear bottoms, outerwear and shoes), cover every planned occasion, and keep it to one carry-on unless the brief says otherwise. Give one look per day/occasion using only capsule pieces.`,
+      content: `Pack me a tight capsule for ${p.destination}${p.start_on ? ` from ${p.start_on}` : ''}${p.end_on ? ` to ${p.end_on}` : ''} (${days} ${days === 1 ? 'day' : 'days'}).${acts.length ? ` Plans: ${acts.join(', ')}.` : ''}${p.brief ? ` Notes: ${p.brief}` : ''}\nWeather: ${p.weather}\n\nRULES\n${rules}\n\nMaximise outfit combinations from the fewest pieces: neutral, mutually compatible bottoms and shoes; tops that work with every bottom.`,
+    }],
+  };
+}
+
+/** Restyles a trip's looks from the capsule as it stands (after he has edited it). Only capsule pieces exist here. */
+export function tripLooksRequest(p: { destination: string; start_on?: string; end_on?: string; weather: string; settings: TripSettings; today: string; brief?: string }, system: Block[]): ClaudeRequest {
+  const days = tripDays(p.start_on, p.end_on);
+  const b = budget(p.settings, days);
+  const acts = p.settings.activities.map((k) => ACTIVITIES.find((a) => a.key === k)?.label ?? k);
+  return {
+    model: MODELS.fast,
+    max_tokens: 9000,
+    output_config: {
+      effort: 'low',
+      format: { type: 'json_schema', schema: { type: 'object', additionalProperties: false, required: ['looks'], properties: { looks: tripLooksSchema(b) } } },
+    },
+    system,
+    messages: [{
+      role: 'user',
+      content: `The wardrobe above is EXACTLY what I've packed for ${p.destination}${p.start_on ? ` (${p.start_on} to ${p.end_on})` : ''}; nothing else exists. ${acts.length ? `Plans: ${acts.join(', ')}. ` : ''}${p.brief ? `Notes: ${p.brief}. ` : ''}Weather: ${p.weather}\nStyle the trip from these pieces only: ${b.mode === 'daily' ? `one look per day (${b.looks}), dated, in order` : `a rotation of ${b.looks} looks covering every occasion and the weather range`}. Don't style gym or swim kit.`,
     }],
   };
 }
@@ -247,27 +313,114 @@ export async function forecast(destination: string, start?: string, end?: string
     const days = (f?.daily?.time ?? []).map((t: string, i: number) => ({
       date: t, max: f.daily.temperature_2m_max[i], min: f.daily.temperature_2m_min[i], rain: f.daily.precipitation_probability_max[i],
     })).filter((d: any) => (!start || d.date >= start) && (!end || d.date <= end));
-    return { place: `${place.name}, ${place.country}`, lat: place.latitude, lon: place.longitude, days };
+    // the live forecast only reaches ~16 days out: flag when the trip runs past it, so the UI and the prompt can say so
+    const partial = !!end && (!days.length || days[days.length - 1].date < end);
+    return { place: `${place.name}, ${place.country}`, lat: place.latitude, lon: place.longitude, days, partial };
   } catch { return null; }
 }
 
+const todayIn = (tz?: string) => {
+  try { return new Date().toLocaleDateString('en-CA', { timeZone: tz || 'Europe/London' }); } catch { return new Date().toISOString().slice(0, 10); }
+};
+
+function weatherText(fc: any, destination: string) {
+  return fc?.days?.length
+    ? `${fc.place}: ` + fc.days.map((d: any) => `${d.date} ${Math.round(d.min)}–${Math.round(d.max)}°C rain ${d.rain}%`).join('; ') + (fc.partial ? ' (live forecast only covers these days; use typical climate for the rest)' : '')
+    : `${destination}: no live forecast for these dates; use the typical climate for the season.`;
+}
+
+const settingsOf = (s: any): TripSettings => ({
+  luggage: ['carry-on', 'checked', 'car'].includes(s?.luggage) ? s.luggage : DEFAULT_SETTINGS.luggage,
+  laundry: ['none', 'weekly', 'easy'].includes(s?.laundry) ? s.laundry : DEFAULT_SETTINGS.laundry,
+  activities: Array.isArray(s?.activities) ? s.activities.filter((x: unknown) => typeof x === 'string').slice(0, 12) : [],
+});
+
+const mapLooks = (ctx: Ctx, looks: any[], allowed: Set<string>) => (looks ?? []).map((d: any) => {
+  const look = normaliseLook(ctx, d.look);
+  if (!look) return null;
+  look.items = look.items.filter((li: any) => allowed.has(li.item_id));
+  return look.items.length >= 2 ? { date: d.date || undefined, label: d.label, look } : null;
+}).filter(Boolean);
+
+// ───────────── plan (or re-plan) a trip ─────────────
 export async function pack(req: Request, caller: Caller) {
-  const { trip_id, destination, start_on, end_on, brief } = await req.json();
+  const body = await req.json();
   const owner = caller.userId;
+  const destination = String(body.destination ?? '').trim();
   if (!destination) throw new HttpError(400, 'destination required');
+  const { trip_id, start_on, end_on, brief } = body;
+  const settings = settingsOf(body.settings);
+  const today = todayIn(body.tz);
+
+  let existing: any = null;
+  if (trip_id) {
+    const { data } = await admin.from('trips').select('*').eq('id', trip_id).eq('owner', owner).maybeSingle();
+    existing = data;
+  }
   const fc = await forecast(destination, start_on, end_on);
-  const weather = fc?.days?.length
-    ? `${fc.place}: ` + fc.days.map((d: any) => `${d.date} ${Math.round(d.min)}–${Math.round(d.max)}°C rain ${d.rain}%`).join('; ')
-    : `${destination} — no live forecast for these dates; use typical climate for the season.`;
+  const weather = weatherText(fc, destination);
   const { ctx, system } = await systemFor(owner, weather);
-  const res = await claude(packRequest({ destination, start_on, end_on, brief, weather }, system), { owner, fn: 'pack' });
+  const excluded: string[] = existing?.excluded_ids ?? [];
+  const pinned: string[] = existing?.pinned_ids ?? [];
+  const label = (id: string) => { const i = ctx.byId.get(id); return i ? `#${i.number} ${i.name}` : null; };
+
+  const res = await claude(packRequest({
+    destination, start_on, end_on, brief, weather, settings, today,
+    excluded: excluded.map(label).filter(Boolean) as string[], pinned: pinned.map(label).filter(Boolean) as string[],
+  }, system), { owner, fn: 'pack' });
   const out = jsonFrom<any>(res);
-  const capsule = (out.capsule ?? []).map((c: any) => { const it = resolveRef(ctx, c.id); return it ? { item_id: it.id, why: c.why } : null; }).filter(Boolean);
-  const days = (out.days ?? []).map((d: any) => ({ date: d.date, label: d.label, look: normaliseLook(ctx, d.look) })).filter((d: any) => d.look);
-  const plan = { summary: out.summary, capsule, days, extras: out.extras ?? [], missing: out.missing ?? [], forecast: fc };
-  const row = { owner, destination, name: `${destination}${start_on ? ` · ${start_on}` : ''}`, start_on: start_on || null, end_on: end_on || null, brief, weather: fc, plan, item_ids: capsule.map((c: any) => c.item_id) };
-  const q = trip_id ? admin.from('trips').update(row).eq('id', trip_id).select().single() : admin.from('trips').insert(row).select().single();
+
+  // capsule: drop anything he excluded, then make sure everything he pinned is there
+  const seen = new Set<string>();
+  const capsule: any[] = [];
+  for (const c of out.capsule ?? []) {
+    const it = resolveRef(ctx, c.id);
+    if (!it || seen.has(it.id) || excluded.includes(it.id)) continue;
+    seen.add(it.id);
+    capsule.push({ item_id: it.id, why: c.why, role: c.role === 'kit' ? 'kit' : 'core', travel: !!c.travel });
+  }
+  for (const id of pinned) if (!seen.has(id) && ctx.byId.has(id)) { seen.add(id); capsule.push({ item_id: id, why: 'You added this', role: 'core', travel: false }); }
+
+  const core = new Set(capsule.filter((c) => c.role === 'core').map((c) => c.item_id));
+  const looks = mapLooks(ctx, out.looks, core);
+
+  // checklist: keep his own additions and anything already ticked; refresh the suggested ones
+  const oldList: any[] = existing?.checklist ?? [];
+  const mine = oldList.filter((x) => x.source === 'me');
+  const suggested = (out.extras ?? []).map((label: string) => ({ id: `x-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}`, label, source: 'ai' }));
+  const checklist = [...suggested.filter((x: any) => !mine.some((m) => m.label.toLowerCase() === x.label.toLowerCase())), ...mine];
+
+  const plan = { summary: out.summary, capsule, looks, days: looks /* read by app builds before trips v2 */, missing: out.missing ?? [], forecast: fc, planned_at: new Date().toISOString(), version: 2 };
+  const row: Record<string, unknown> = {
+    owner, destination, name: destination, start_on: start_on || null, end_on: end_on || null, brief: brief || null,
+    weather: fc, plan, settings, item_ids: capsule.map((c) => c.item_id), checklist,
+  };
+  if (!existing) row.status = 'planning';
+  const q = existing ? admin.from('trips').update(row).eq('id', existing.id).select().single() : admin.from('trips').insert(row).select().single();
   const { data, error } = await q;
+  if (error) throw new HttpError(500, error.message);
+  return json(data);
+}
+
+// ───────────── restyle a trip's looks from its capsule as edited ─────────────
+export async function tripLooks(req: Request, caller: Caller) {
+  const body = await req.json();
+  const owner = caller.userId;
+  const { data: trip } = await admin.from('trips').select('*').eq('id', body.trip_id).eq('owner', owner).maybeSingle();
+  if (!trip) throw new HttpError(404, 'Trip not found');
+  const plan = trip.plan ?? {};
+  const kit = new Set<string>((plan.capsule ?? []).filter((c: any) => c.role === 'kit').map((c: any) => c.item_id));
+  const coreIds: string[] = (trip.item_ids ?? []).filter((id: string) => !kit.has(id));
+  if (coreIds.length < 2) throw new HttpError(400, 'Add a few more pieces first');
+  const fc = trip.weather ?? plan.forecast ?? null;
+  const weather = weatherText(fc, trip.destination);
+  const full = await loadContext(owner);
+  const ctx = full.scope(coreIds);
+  const system = systemBlocks(ctx, weather);
+  const res = await claude(tripLooksRequest({ destination: trip.destination, start_on: trip.start_on ?? undefined, end_on: trip.end_on ?? undefined, weather, settings: settingsOf(trip.settings), today: todayIn(body.tz), brief: trip.brief ?? undefined }, system), { owner, fn: 'trip.looks' });
+  const out = jsonFrom<any>(res);
+  const looks = mapLooks(ctx, out.looks, new Set(coreIds));
+  const { data, error } = await admin.from('trips').update({ plan: { ...plan, looks, days: looks, looks_at: new Date().toISOString(), stale: false } }).eq('id', trip.id).select().single();
   if (error) throw new HttpError(500, error.message);
   return json(data);
 }

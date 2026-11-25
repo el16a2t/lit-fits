@@ -2,7 +2,7 @@
 import { authenticate, cors, HttpError, json } from './lib/core.ts';
 import { itemProcess } from './routes/items.ts';
 import { stylist } from './routes/stylist.ts';
-import { complete, critique, nameLook, pack, pairings } from './routes/assist.ts';
+import { complete, critique, nameLook, pack, pairings, tripLooks } from './routes/assist.ts';
 import { buildTwin, render, renderUrl } from './routes/render.ts';
 import { dna, trends } from './routes/style.ts';
 import { bootstrap, clientLog, reshootMissing, wishlistConcept } from './routes/misc.ts';
@@ -17,6 +17,7 @@ const routes: Record<string, Handler> = {
   'look/complete': complete,
   'look/name': nameLook,
   'look/critique': critique,
+  'trip/looks': tripLooks,
   'trip/pack': pack,
   'render': render,
   'render/urls': renderUrl,

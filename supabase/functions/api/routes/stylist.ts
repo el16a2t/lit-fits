@@ -114,10 +114,17 @@ export async function stylist(req: Request, caller: Caller) {
   } else {
     await admin.from('threads').update({ updated_at: new Date().toISOString() }).eq('id', threadId);
   }
-  const [{ data: history }, ctx] = await Promise.all([
+  const [{ data: history }, fullCtx, { data: trip }] = await Promise.all([
     admin.from('messages').select('role,content,looks').eq('thread_id', threadId).order('created_at', { ascending: false }).limit(12),
     loadContext(owner),
+    body.context?.trip_id
+      ? admin.from('trips').select('id,destination,start_on,end_on,item_ids,plan').eq('id', body.context.trip_id).eq('owner', owner).maybeSingle()
+      : Promise.resolve({ data: null as any }),
   ]);
+  // away mode: he only has the packed pieces with him, so that is the whole wardrobe for this conversation
+  const tripKit = new Set<string>((trip?.plan?.capsule ?? []).filter((c: any) => c.role === 'kit').map((c: any) => c.item_id));
+  const tripIds: string[] = (trip?.item_ids ?? []).filter((id: string) => !tripKit.has(id));
+  const ctx = tripIds.length >= 2 ? fullCtx.scope(tripIds) : fullCtx;
   await admin.from('messages').insert({ thread_id: threadId, owner, role: 'user', content: prompt, meta: { context: body.context ?? null } });
 
   const weather: string | null = body.context?.weather ?? null;
@@ -127,10 +134,11 @@ export async function stylist(req: Request, caller: Caller) {
     body.context?.available_only ? 'Only use pieces that are currently available (not in wash/drying/storage).' : null,
     focusNums.length ? `Build around: ${focusNums.join(', ')}.` : null,
     body.context?.count ? `Give ${body.context.count} looks.` : null,
+    tripIds.length >= 2 ? `He is away in ${trip!.destination}${trip!.end_on ? ` until ${trip!.end_on}` : ''} and only has the ${tripIds.length} packed pieces listed in the wardrobe with him. Never suggest anything else he owns; suggest buying something only if he asks.` : null,
   ].filter(Boolean).join(' ');
 
   const system: Block[] = [
-    { type: 'text', text: stylistSystem({ name: ctx.profile?.display_name || 'Adam', seed: ctx.seed, dna: ctx.profile?.style_dna, body: ctx.body, trend: ctx.trend, today: todayString(), weather }) },
+    { type: 'text', text: stylistSystem({ name: ctx.profile?.display_name || 'Adam', seed: ctx.seed, dna: ctx.profile?.style_dna, body: ctx.body, trend: ctx.trend, today: todayString(body.context?.tz || undefined), weather }) },
     { type: 'text', text: ctx.text, cache_control: { type: 'ephemeral' } },
   ];
   const messages: Msg[] = [];
