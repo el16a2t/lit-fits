@@ -109,6 +109,7 @@ export interface PackInput {
   today: string;
   excluded: string[]; // "#n name" of pieces he took out
   pinned: string[]; // "#n name" of pieces he insists on
+  unworn?: string[]; // "#n name" of pieces packed on past trips that never came out of the bag
 }
 
 const tripLooksSchema = (b: Budget) => ({
@@ -144,6 +145,7 @@ export function packRequest(p: PackInput, system: Block[]): ClaudeRequest {
     already ? `He is ALREADY on this trip (today is day ${already} of ${days}). He has the bag with him: plan the rotation for the rest of the stay.` : null,
     p.excluded.length ? `He has taken these OUT: never include them: ${p.excluded.join(', ')}.` : null,
     p.pinned.length ? `He has insisted on these: always include them, and build around them: ${p.pinned.join(', ')}.` : null,
+    p.unworn?.length ? `On past trips he packed these and never wore them: be sceptical, include one only if this trip clearly needs it: ${p.unworn.join(', ')}.` : null,
   ].filter(Boolean).join('\n');
   return {
     model: MODELS.stylist,
@@ -364,9 +366,14 @@ export async function pack(req: Request, caller: Caller) {
   const pinned: string[] = existing?.pinned_ids ?? [];
   const label = (id: string) => { const i = ctx.byId.get(id); return i ? `#${i.number} ${i.name}` : null; };
 
+  // learn from past trips: what came home unworn
+  const { data: past } = await admin.from('trips').select('wrap').eq('owner', owner).eq('status', 'done').not('wrap', 'is', null).order('updated_at', { ascending: false }).limit(3);
+  const unworn = [...new Set((past ?? []).flatMap((t: any) => t.wrap?.unworn ?? []))].filter((id) => !pinned.includes(id));
+
   const res = await claude(packRequest({
     destination, start_on, end_on, brief, weather, settings, today,
     excluded: excluded.map(label).filter(Boolean) as string[], pinned: pinned.map(label).filter(Boolean) as string[],
+    unworn: unworn.map(label).filter(Boolean) as string[],
   }, system), { owner, fn: 'pack' });
   const out = jsonFrom<any>(res);
 
