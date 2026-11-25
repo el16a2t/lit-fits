@@ -10,7 +10,7 @@ import { claude, jsonFrom } from '../lib/anthropic.ts';
 import { buildCtx, loadContext, resolveRef, type WardrobeItem } from '../lib/context.ts';
 import { ADAM_DEFAULT_SEED } from '../lib/prompts.ts';
 import { assess, tripDays } from '../lib/tripRules.ts';
-import { completeRequest, critiqueRequest, forecast, nameRequest, packRequest, pairingsRequest, shapePairings, systemBlocks } from './assist.ts';
+import { completeRequest, critiqueRequest, forecast, nameRequest, packRequest, tripLooksRequest, pairingsRequest, shapePairings, systemBlocks } from './assist.ts';
 import { normaliseLook, runStylist, stylistTurn } from './stylist.ts';
 
 /** Wardrobe context built from staged seed pieces, so every AI path can be exercised before an owner exists. */
@@ -255,6 +255,22 @@ export async function lab(req: Request, caller: Caller, route: string) {
         const capsule = (out.capsule ?? []).map((c: any) => { const it = resolveRef(use, c.id); return it ? { n: it.number, name: it.name, slot: it.slot, role: c.role, travel: c.travel, why: c.why } : { bad: c.id }; });
         const check = assess(capsule.filter((c: any) => !c.bad), settings, tripDays(body.start_on, body.end_on));
         return done({ weather, summary: out.summary, check, capsule, looks: (out.looks ?? []).map((d: any) => ({ date: d.date, label: d.label, items: normaliseLook(use, d.look)?.items.map((i: any) => i.number) })), extras: out.extras, missing: out.missing });
+      }
+      case 'trip-looks': {
+        // body: {trip_id} → restyle that real trip from its capsule exactly as trip/looks does, without saving
+        const { data: trip } = await admin.from('trips').select('*').eq('id', body.trip_id).single();
+        const owner = trip!.owner;
+        const kit = new Set((trip!.plan?.capsule ?? []).filter((c: any) => c.role === 'kit').map((c: any) => c.item_id));
+        const coreIds = (trip!.item_ids ?? []).filter((id: string) => !kit.has(id));
+        const scoped = (await loadContext(owner)).scope(coreIds);
+        const fc = trip!.weather ?? trip!.plan?.forecast;
+        const weather = fc?.days?.length ? `${fc.place}: ` + fc.days.map((d: any) => `${d.date} ${Math.round(d.min)}–${Math.round(d.max)}°C rain ${d.rain}%`).join('; ') : `${trip!.destination}, typical climate`;
+        const settings = { luggage: trip!.settings?.luggage ?? 'carry-on', laundry: trip!.settings?.laundry ?? 'weekly', activities: trip!.settings?.activities ?? [] };
+        const res = await claude(tripLooksRequest({ destination: trip!.destination, start_on: trip!.start_on, end_on: trip!.end_on, weather, settings, today: new Date().toISOString().slice(0, 10), brief: trip!.brief }, systemBlocks(scoped, weather)), { owner: null, fn: 'lab.trip-looks' });
+        const out = jsonFrom<any>(res);
+        const looks = (out.looks ?? []).map((d: any) => ({ date: d.date, label: d.label, items: normaliseLook(scoped, d.look)?.items.map((i: any) => i.item_id) }));
+        const outside = looks.flatMap((l: any) => (l.items ?? []).filter((id: string) => !coreIds.includes(id)));
+        return done({ n: looks.length, capsule: coreIds.length, outside, labels: looks.map((l: any) => `${l.date ?? '-'} ${l.label} (${l.items?.length})`) });
       }
       case 'critique': {
         // body.ns: 1-based staged piece numbers, e.g. [2, 6, 7]
