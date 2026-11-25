@@ -298,3 +298,5 @@ export default function ItemDetail() {
     </View>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';

@@ -171,3 +171,5 @@ export default function You() {
     </Screen>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';

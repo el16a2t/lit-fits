@@ -178,8 +178,9 @@ export function targetWarmth(tempC?: number | null): number | null {
   return 1;
 }
 
-export function currentSeason(d = new Date()): string {
-  const m = d.getMonth();
+/** Season by month, flipped south of the equator (November in Buenos Aires is late spring, not autumn). */
+export function currentSeason(d = new Date(), latitude?: number | null): string {
+  const m = (d.getMonth() + (latitude != null && latitude < 0 ? 6 : 0)) % 12;
   return m <= 1 || m === 11 ? 'winter' : m <= 4 ? 'spring' : m <= 7 ? 'summer' : 'autumn';
 }
 

@@ -175,3 +175,5 @@ export default function Wardrobe() {
     </Screen>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';

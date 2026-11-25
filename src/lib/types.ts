@@ -193,6 +193,25 @@ export interface WishlistItem {
   created_at: string;
 }
 
+export interface TripCapsulePiece {
+  item_id: string;
+  why: string;
+  /** core pieces are styled into looks; kit (gym, swim) is packed but never styled */
+  role?: 'core' | 'kit';
+  /** wear it on the journey */
+  travel?: boolean;
+}
+
+export interface TripLook {
+  date?: string;
+  label: string;
+  look: StylistLook;
+  /** a piece was swapped automatically after the capsule changed */
+  repaired?: boolean;
+}
+
+export interface TripChecklistItem { id: string; label: string; source: 'ai' | 'me' }
+
 export interface Trip {
   id: string;
   name: string | null;
@@ -202,13 +221,25 @@ export interface Trip {
   brief: string | null;
   plan: {
     summary?: string;
-    capsule?: { item_id: string; why: string }[];
-    days?: { date?: string; label: string; look: StylistLook }[];
+    capsule?: TripCapsulePiece[];
+    looks?: TripLook[];
+    /** v1 plans stored looks here */
+    days?: TripLook[];
     extras?: string[];
     missing?: MissingPiece[];
-    forecast?: { place: string; days: { date: string; min: number; max: number; rain: number }[] } | null;
+    forecast?: { place: string; lat?: number; lon?: number; partial?: boolean; days: { date: string; min: number; max: number; rain: number }[] } | null;
+    /** the capsule changed since the looks were styled */
+    stale?: boolean;
+    version?: number;
   } | null;
+  settings?: Partial<import('./tripRules').TripSettings> | null;
   item_ids: string[];
+  excluded_ids?: string[];
+  pinned_ids?: string[];
+  checklist?: TripChecklistItem[];
+  packed?: Record<string, boolean>;
+  worn?: Record<string, number>;
+  wrap?: { unworn: string[]; at: string } | null;
   status: 'planning' | 'packed' | 'away' | 'done';
   created_at: string;
 }

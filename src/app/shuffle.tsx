@@ -11,7 +11,9 @@ import { signal } from '@/lib/data';
 import { itemTitle } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { generateLooks, lookScore, targetWarmth } from '@/lib/outfit';
-import { useItems, useItemUsage, useSaveLook } from '@/lib/queries';
+import { useItemUsage, useSaveLook } from '@/lib/queries';
+import { useWardrobe } from '@/lib/trips';
+import { AwayBanner } from '@/components/TripParts';
 import type { Item } from '@/lib/types';
 import { useWeather } from '@/lib/weather';
 import { useDraft } from '@/state/draft';
@@ -60,7 +62,7 @@ export default function Shuffle() {
   const ins = useSafeAreaInsets();
   const router = useRouter();
   const { width, height } = useWindowDimensions();
-  const { data: all = [] } = useItems();
+  const { items: all } = useWardrobe();
   const { data: usage = {} } = useItemUsage();
   const { data: weather } = useWeather();
   const save = useSaveLook();
@@ -100,6 +102,7 @@ export default function Shuffle() {
     <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: ins.top }}>
       <Grain />
       <TopBar left={<IconButton name="back" onPress={() => router.back()} />} center={<Label>Shuffle{kept ? ` · ${kept} kept` : ''}</Label>} right={<IconButton name="refresh" onPress={() => { haptic.medium(); deal(); }} />} />
+      <AwayBanner style={{ marginHorizontal: space.lg, marginBottom: space.sm }} />
       <View style={{ flexDirection: 'row', gap: 6, paddingHorizontal: space.lg, paddingBottom: space.md }}>
         <Chip small label="Favour forgotten pieces" active={preferUnused} onPress={() => setPreferUnused((v) => !v)} />
         <Chip small label={weather ? `Weather · ${weather.temp}°` : 'Weather'} active={useWx} onPress={() => setUseWx((v) => !v)} />
@@ -131,3 +134,5 @@ export default function Shuffle() {
     </View>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';

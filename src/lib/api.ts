@@ -2,6 +2,7 @@
 import { fetch as expoFetch } from 'expo/fetch';
 import { Platform } from 'react-native';
 import { DEMO, FUNCTIONS_URL, SUPABASE_ANON_KEY, supabase } from './supabase';
+import type { TripSettings } from './tripRules';
 import type { Look, LookCritique, Pairings, Render, StylistLook, Trip } from './types';
 import { demoApi } from '@/demo/api';
 import { errorInfo, trace } from './diag';
@@ -85,7 +86,9 @@ export const api = {
   complete: (item_ids: string[], prompt?: string, weather?: string | null) => call<{ looks: StylistLook[] }>('look/complete', { item_ids, prompt, weather }, { timeoutMs: 150_000 }),
   nameLook: (item_ids: string[]) => call<{ title: string; occasion: string }>('look/name', { item_ids }),
   critique: (item_ids: string[], heuristic?: string, weather?: string | null) => call<LookCritique>('look/critique', { item_ids, heuristic, weather }, { timeoutMs: 90_000 }),
-  pack: (p: { destination: string; start_on?: string; end_on?: string; brief?: string; trip_id?: string }) => call<Trip>('trip/pack', p, { timeoutMs: 170_000 }),
+  pack: (p: { destination: string; start_on?: string; end_on?: string; brief?: string; trip_id?: string; settings?: TripSettings }) =>
+    call<Trip>('trip/pack', { ...p, tz: Intl.DateTimeFormat().resolvedOptions().timeZone }, { timeoutMs: 170_000 }),
+  restyleTrip: (trip_id: string) => call<Trip>('trip/looks', { trip_id, tz: Intl.DateTimeFormat().resolvedOptions().timeZone }, { timeoutMs: 120_000 }),
   render: (p: { items: { item_id: string; mode?: string; note?: string }[]; look_id?: string | null; scene?: string; extra?: string; model?: string }) => call<Render>('render', p),
   signedUrls: (paths: string[]) => call<Record<string, string | null>>('render/urls', { paths }),
   buildTwin: () => call<{ ok: boolean }>('twin/build', {}),

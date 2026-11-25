@@ -101,6 +101,7 @@ function Navigator() {
           <Stack.Screen name="wishlist" />
           <Stack.Screen name="pack" />
           <Stack.Screen name="trip/[id]" />
+          <Stack.Screen name="trips" />
           <Stack.Screen name="twin" />
           <Stack.Screen name="dna" />
         </Stack.Protected>

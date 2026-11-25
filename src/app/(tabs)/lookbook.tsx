@@ -119,3 +119,5 @@ export default function Lookbook() {
     </Screen>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';

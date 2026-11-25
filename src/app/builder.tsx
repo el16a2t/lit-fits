@@ -247,3 +247,5 @@ export default function Builder() {
     </View>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';

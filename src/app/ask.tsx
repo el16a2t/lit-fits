@@ -8,8 +8,10 @@ import { LookCard } from '@/components/LookCard';
 import { Chip, IconButton, Label, Thinking, TopBar, Txt } from '@/components/ui';
 import { streamStylist } from '@/lib/api';
 import { haptic } from '@/lib/haptics';
-import { qk, queryClient, useItems, useMessages, useProfile } from '@/lib/queries';
+import { qk, queryClient, useMessages, useProfile } from '@/lib/queries';
 import type { StylistLook } from '@/lib/types';
+import { useWardrobe } from '@/lib/trips';
+import { AwayBanner } from '@/components/TripParts';
 import { useWeather, weatherLine } from '@/lib/weather';
 import { usePrefs } from '@/state/prefs';
 import { space, type as T, useTheme } from '@/theme';
@@ -24,7 +26,7 @@ export default function Ask() {
   const router = useRouter();
   const { data: weather } = useWeather();
   const { data: profile } = useProfile();
-  const { data: all = [] } = useItems();
+  const { items: all, trip: scopedTrip } = useWardrobe();
   const useWeatherPref = usePrefs((s) => s.useWeather);
   const [threadId, setThreadId] = useState<string | undefined>(params.thread);
   const { data: history } = useMessages(params.thread);
@@ -68,6 +70,8 @@ export default function Ask() {
           weather: useWeatherPref ? weatherLine(weather) : null,
           available_only: availableOnly,
           focus_item_ids: focus,
+          trip_id: scopedTrip?.id ?? null,
+          tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
       },
       {
@@ -101,6 +105,7 @@ export default function Ask() {
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1, backgroundColor: c.bg, paddingTop: ins.top }}>
       <TopBar left={<IconButton name="back" onPress={() => router.back()} />} center={<Label>Stylist</Label>}
         right={<IconButton name="plus" onPress={() => { abort.current?.(); setTurns([]); setThreadId(undefined); setBusy(false); setStatus(null); }} accessibilityLabel="New conversation" />} />
+      <AwayBanner style={{ marginHorizontal: space.lg }} />
       <ScrollView ref={scroll} contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl, gap: space.lg }} keyboardShouldPersistTaps="handled">
         {!turns.length ? (
           <Animated.View entering={FadeIn} style={{ gap: space.md, paddingTop: space.xl }}>
@@ -156,3 +161,5 @@ export default function Ask() {
     </KeyboardAvoidingView>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';

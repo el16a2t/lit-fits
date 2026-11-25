@@ -44,6 +44,7 @@ let LOOKS: Look[] = [
   },
 ];
 
+let TRIPS: Trip[] = [];
 let WISH: WishlistItem[] = [
   { id: 'w1', title: 'Dark brown suede chukka boots', subtype: 'boot_chukka', slot: 'feet', description: 'Unlined suede, crepe or rubber sole, slim but not pointy last.', colour: 'Dark brown', reason: 'Your olive and washed-black pieces have nothing warm to land on — brown suede finishes them.', pairs_with: ['demo-5', 'demo-3', 'demo-6'], look: null, search_query: 'dark brown suede chukka boots', concept_url: null, priority: 1, status: 'wanted', created_at: iso(500) },
 ];
@@ -78,10 +79,10 @@ try {
   const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(persistKey) : null;
   if (raw) {
     const d = JSON.parse(raw);
-    if (d.v === 2) { ITEMS = d.items; LOOKS = d.looks; WISH = d.wish; }
+    if (d.v === 2) { ITEMS = d.items; LOOKS = d.looks; WISH = d.wish; TRIPS = d.trips ?? []; }
   }
 } catch { /* ignore */ }
-const save = () => { try { localStorage.setItem(persistKey, JSON.stringify({ v: 2, items: ITEMS, looks: LOOKS, wish: WISH })); } catch { /* ignore */ } };
+const save = () => { try { localStorage.setItem(persistKey, JSON.stringify({ v: 2, items: ITEMS, looks: LOOKS, wish: WISH, trips: TRIPS })); } catch { /* ignore */ } };
 
 const delay = <T,>(v: T, ms = 120) => new Promise<T>((r) => setTimeout(() => r(v), ms));
 
@@ -122,8 +123,12 @@ export const demoStore = {
   updateWish: (id: string, patch: Partial<WishlistItem>) => { WISH = WISH.map((w) => (w.id === id ? { ...w, ...patch } : w)).filter((w) => w.status !== 'dismissed'); save(); return delay(WISH.find((w) => w.id === id)!); },
   threads: () => delay([...THREADS]),
   messages: (_id: string) => delay([] as Message[]),
-  trips: () => delay([] as Trip[]),
-  trip: (id: string) => delay({ id } as Trip),
+  trips: () => delay([...TRIPS]),
+  trip: (id: string) => delay(TRIPS.find((t) => t.id === id)!),
+  upsertTrip: (t: Trip) => { TRIPS = [t, ...TRIPS.filter((x) => x.id !== t.id)]; save(); return delay(t); },
+  updateTrip: (id: string, patch: Partial<Trip>) => { TRIPS = TRIPS.map((t) => (t.id === id ? { ...t, ...patch } : t)); save(); return delay(TRIPS.find((t) => t.id === id)!); },
+  removeTrip: (id: string) => { TRIPS = TRIPS.filter((t) => t.id !== id); save(); return delay(undefined); },
+  allItems: () => ITEMS,
   profile: () => delay({ ...PROFILE }),
   updateProfile: (p: Partial<Profile>) => { Object.assign(PROFILE, p); return delay({ ...PROFILE }); },
   brief: () => delay(BRIEF),

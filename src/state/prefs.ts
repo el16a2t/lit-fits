@@ -16,6 +16,8 @@ interface Prefs {
   mixerSmart: boolean;
   mixerAvailableOnly: boolean;
   hapticsOn: boolean;
+  /** while a trip is under way, work from the packed pieces only */
+  awayMode: boolean;
   set: (p: Partial<Omit<Prefs, 'set'>>) => void;
 }
 
@@ -30,6 +32,7 @@ export const usePrefs = create<Prefs>()(
       mixerSmart: true,
       mixerAvailableOnly: false,
       hapticsOn: true,
+      awayMode: true,
       set: (p) => set(p),
     }),
     { name: 'litfits.prefs', storage: createJSONStorage(() => AsyncStorage) },

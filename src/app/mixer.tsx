@@ -12,7 +12,8 @@ import { api } from '@/lib/api';
 import { itemTitle } from '@/lib/format';
 import { haptic } from '@/lib/haptics';
 import { lookScore, rankForSlot, targetWarmth } from '@/lib/outfit';
-import { useItems, useItemUsage, useSaveLook } from '@/lib/queries';
+import { useItemUsage, useSaveLook } from '@/lib/queries';
+import { useActiveTrip, useWardrobe } from '@/lib/trips';
 import { SLOTS, type Slot } from '@/lib/taxonomy';
 import type { Item } from '@/lib/types';
 import { useWeather } from '@/lib/weather';
@@ -29,7 +30,9 @@ export default function Mixer() {
   const router = useRouter();
   const params = useLocalSearchParams<{ lock?: string; from?: string }>();
   const { width, height } = useWindowDimensions();
-  const { data: all = [] } = useItems();
+  const { items: all } = useWardrobe();
+  const { current: liveTrip } = useActiveTrip();
+  const awayMode = usePrefs((st) => st.awayMode);
   const { data: usage = {} } = useItemUsage();
   const { data: weather } = useWeather();
   const { mixerSmart, mixerAvailableOnly, set: setPrefs } = usePrefs();
@@ -195,6 +198,7 @@ export default function Mixer() {
             <View style={{ alignSelf: 'flex-start' }}><LookVerdict items={current} score={score} small onSwap={swapIn} /></View>
           )}
         </View>
+        {liveTrip ? <Chip small icon="suitcase" label="Bag" active={awayMode} onPress={() => { setPrefs({ awayMode: !awayMode }); toast(awayMode ? 'Using your whole wardrobe' : `Only what's in your ${(liveTrip.destination ?? '').trim()} bag`); }} /> : null}
         <Chip small label="Smart" active={mixerSmart} onPress={() => setPrefs({ mixerSmart: !mixerSmart })} />
         <IconButton name="shuffle" bg={c.ink} color={c.bg} onPress={shuffle} accessibilityLabel="Shuffle" />
         <IconButton name="more" onPress={() => setMenu(true)} />
@@ -247,3 +251,5 @@ export default function Mixer() {
     </View>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';

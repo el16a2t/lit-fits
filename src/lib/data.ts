@@ -244,11 +244,11 @@ export const trips = {
     return check(await supabase.from('trips').select('*').eq('id', id).single()) as Trip;
   },
   async update(id: string, patch: Partial<Trip>) {
-    if (DEMO) return demoStore.trip(id);
+    if (DEMO) return demoStore.updateTrip(id, patch);
     return check(await supabase.from('trips').update(patch).eq('id', id).select('*').single()) as Trip;
   },
   async remove(id: string) {
-    if (DEMO) return;
+    if (DEMO) return demoStore.removeTrip(id);
     check(await supabase.from('trips').delete().eq('id', id).select('id'));
   },
 };

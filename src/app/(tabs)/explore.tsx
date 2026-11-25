@@ -4,9 +4,11 @@ import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { Icon, type IconName } from '@/components/icons';
 import { Chip, IconButton, Label, Press, Screen, Txt } from '@/components/ui';
 import { traceNow } from '@/lib/diag';
+import { dayOfTrip, tripDays } from '@/lib/tripRules';
+import { localToday, pickActive } from '@/lib/trips';
 import { greeting, relTime } from '@/lib/format';
 import { currentSeason } from '@/lib/outfit';
-import { useItems, useItemUsage, useProfile, useThreads, useWishlist } from '@/lib/queries';
+import { useItems, useItemUsage, useProfile, useThreads, useTrips, useWishlist } from '@/lib/queries';
 import { useWeather, weatherLine } from '@/lib/weather';
 import { space, type as T, useTheme } from '@/theme';
 
@@ -21,7 +23,23 @@ export default function Explore() {
   const { data: usage = {} } = useItemUsage();
   const { data: wishes = [] } = useWishlist();
   const never = useMemo(() => all.filter((i) => !usage[i.id]).length, [all, usage]);
-  const season = currentSeason();
+  const { data: trips = [] } = useTrips();
+  const awayLat = useMemo(() => pickActive(trips, localToday()).current?.plan?.forecast?.lat ?? null, [trips]);
+  const season = currentSeason(new Date(), awayLat);
+  const tripTile = useMemo(() => {
+    const today = localToday();
+    const { current, upcoming } = pickActive(trips, today);
+    if (current) {
+      const day = dayOfTrip(current.start_on, current.end_on, today);
+      return { kicker: `Away · day ${day} of ${tripDays(current.start_on, current.end_on)}`, title: (current.destination ?? 'Trip').trim(), body: "Today's look from the bag.", onPress: () => router.push({ pathname: '/trip/[id]', params: { id: current.id } }) };
+    }
+    if (upcoming) {
+      const until = Math.round((Date.parse(upcoming.start_on!) - Date.parse(today)) / 86400000);
+      return { kicker: `In ${until} ${until === 1 ? 'day' : 'days'}`, title: (upcoming.destination ?? 'Trip').trim(), body: `${upcoming.item_ids.length} pieces. Pack and tick it off.`, onPress: () => router.push({ pathname: '/trip/[id]', params: { id: upcoming.id } }) };
+    }
+    if (trips.length) return { kicker: 'Trips', title: 'Pack a bag', body: 'Plan the next one, or look back.', onPress: () => router.push('/trips') };
+    return { kicker: 'Pack', title: 'Trip capsule', body: 'Fewest pieces, most outfits, right weather.', onPress: () => router.push('/pack') };
+  }, [trips, router]);
   useEffect(() => { traceNow('explore:mount', { weather: !!weather }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const suggestions = useMemo(() => [
@@ -87,7 +105,7 @@ export default function Explore() {
             <Mode icon="eye" kicker={`${never} never styled`} title="Rediscover" body="Pieces you forgot you own, put to work." onPress={() => router.push('/rediscover')} />
           </View>
           <View style={{ flexDirection: 'row', gap: space.md }}>
-            <Mode icon="suitcase" kicker="Pack" title="Trip capsule" body="Fewest pieces, most outfits, right weather." onPress={() => router.push('/pack')} />
+            <Mode icon="suitcase" {...tripTile} />
             <Mode icon="bag" kicker={`${wishes.length} wanted`} title="Wishlist" body="What would unlock your wardrobe." onPress={() => router.push('/wishlist')} />
           </View>
           <Press onPress={() => router.push('/dna')} scaleTo={0.98} style={{ borderWidth: 1, borderColor: c.ink, padding: space.lg, gap: 6 }}>
@@ -121,3 +139,5 @@ export default function Explore() {
     </Screen>
   );
 }
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError';
