@@ -14,6 +14,10 @@ on:
         description: 'Build a fresh APK even if native code is unchanged'
         type: boolean
         default: true
+      deploy_backend:
+        description: 'Deploy the edge function even if it looks unchanged'
+        type: boolean
+        default: false
 
 concurrency:
   group: ship-${{ github.ref }}
@@ -35,7 +39,7 @@ jobs:
       functions_changed: ${{ steps.fn.outputs.changed }}
     steps:
       - uses: actions/checkout@v5
-        with: { fetch-depth: 2 }
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: npm }
       - run: npm ci --no-audit --no-fund
@@ -75,8 +79,14 @@ jobs:
           echo "fingerprint $HASH (last release: ${LAST:-none})"
       - name: Did the backend change?
         id: fn
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
-          if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^supabase/functions/'; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+          # compare the whole push (not just the last commit), so multi-commit pushes and redeploys aren't missed
+          if [ "${{ inputs.deploy_backend }}" = "true" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          BASE="$BEFORE"; if [ -z "$BASE" ] || ! git cat-file -e "$BASE" 2>/dev/null; then BASE=HEAD~1; fi
+          if git diff --name-only "$BASE" HEAD | grep -q '^supabase/functions/'; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+          git diff --name-only "$BASE" HEAD | sed 's/^/  changed: /'
 
   apk:
     needs: check
