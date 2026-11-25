@@ -137,7 +137,10 @@ export function packRequest(p: PackInput, system: Block[]): ClaudeRequest {
   const rules = [
     `Luggage: ${LUGGAGE.find((l) => l.key === p.settings.luggage)?.label}. Laundry: ${LAUNDRY.find((l) => l.key === p.settings.laundry)?.label} (so the bag covers about ${b.cycle} days of wear before a wash).`,
     `HARD LIMITS for role "core": at most ${b.pieces} clothes (tops, mid-layers, bottoms, outer; watches, bags and caps don't count), at most ${b.shoes} pairs of shoes in total INCLUDING any for the gym or beach and the pair worn travelling, at most ${b.outer} outer layers. Fewer is better if every occasion is still covered.`,
-    kitActs.length ? `Functional kit for ${kitActs.join(' and ')}: list it in the capsule with role "kit" (e.g. gym shorts, swim shorts). Kit is never styled into looks. Reuse a core trainer for the gym rather than packing another pair where possible.` : 'No functional kit is needed: every capsule piece has role "core".',
+    kitActs.length ? `Functional kit for ${kitActs.join(' and ')}: list it in the capsule with role "kit" (e.g. gym shorts, swim shorts). Kit is never styled into looks.` : 'No functional kit is needed: every capsule piece has role "core".',
+    p.settings.activities.some((k) => ['gym', 'hiking'].includes(k))
+      ? `Shoes: because ${p.settings.activities.includes('gym') ? 'he trains' : 'he hikes'}, one of the ${b.shoes} pairs MUST be trainers or trail shoes he can actually ${p.settings.activities.includes('gym') ? 'run and lift in' : 'hike in'} (role "core" so they're also styled for casual days, and usually the pair to travel in). The other pair(s) cover smarter occasions. Never satisfy the gym with loafers or suede.`
+      : null,
     `Mark travel: true on the pieces to wear on the journey (the bulkiest: outer layer, heaviest trousers and shoes).`,
     b.mode === 'daily'
       ? `Looks: one per day (${b.looks}), dated, in order, matched to that day's forecast and plans.`
